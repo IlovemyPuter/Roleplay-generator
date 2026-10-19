@@ -72,25 +72,25 @@ Przyjęte założenie: właścicielem systemu jest mała firma lub zespół rozw
 |Zapis i wznawianie gry|	Możliwość dodawania nowych funkcji|
 
 ## Harmonogram
-### 1. 15.10 do 18.10: Przyrost 1, rozmowa z postacią
+### 15.10 do 18.10: Przyrost 1, rozmowa z postacią
 -	15.10: kontrakty ustalone
 -	16.10: atrapa
 -	18.10: prawdziwe wywołanie LLM, test 10 wiadomości
-### 2. 19.10 do 25.10: Przyrost 2, postać i zapis gry
+### 19.10 do 25.10: Przyrost 2, postać i zapis gry
 -	19.10 do 21.10: generowanie postaci przez LLM
 -	22.10 do 24.10: zapis i wznawianie stanu gry
 -	25.10: test, czy po wznowieniu stan się zgadza
-### 3. 26.10 do 1.11: Przyrost 3, fabuła i punkty zwrotne
+### 26.10 do 1.11: Przyrost 3, fabuła i punkty zwrotne
 -	26.10 do 28.10: struktura punktu zwrotnego w kodzie (warunek, skutek, stan)
 -	29.10 do 31.10: generowanie fabuły przez LLM
 -	1.11: przegląd, czy punkty nie są sprzeczne
-### 4. 2.11 do 4.11: Przyrost 4, połączenie fabuły z grą
+### 2.11 do 4.11: Przyrost 4, połączenie fabuły z grą
 -	2.11 do 3.11: punkty zwrotne wpływają na rozgrywkę
 -	4.11: test, czy działanie gracza wywołuje zmianę fabuły
-### 5. 5.11 do 6.11: testy integracyjne i poprawki
+### 5.11 do 6.11: testy integracyjne i poprawki
 -	5.11: przejście wszystkich przypadków testowych
 -	6.11: poprawki błędów krytycznych
-### 6. 7.11: pierwsze wydanie
+### 7.11: pierwsze wydanie
 -	uruchamialna wersja i instrukcja obsługi
 -	nowy użytkownik przechodzi grę od startu do wznowienia zapisu
 ### Podział zadań w przyrostach 2 i 4 ustalimy po zakończeniu przyrostu 1.
