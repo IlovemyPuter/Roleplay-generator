@@ -5,4 +5,4 @@
 5. Jako użytkownik chcę wybrać liczby graczy na starcie, aby prowadzić rozgrywkę z kilkoma grywalnymi postaciami
 6. Jako użytkownik chcę mieć możliwość opcjonalnego opisu setingu, aby odpowiadał moim preferencjom
 7. Jako użytkownik chcę mieć możliwość przytrzymywania przycisku rzutu kością, aby mieć iluzję dokonania wyboru
-8. 
+8. Jako użytkownik chcę, aby fabuła zawierała punkty zwrotne zależne od moich decyzji, aby gra nie była tylko luźną rozmową.
