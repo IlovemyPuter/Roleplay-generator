@@ -10,8 +10,9 @@ import tkinter as tk
 from interface import CharacterSelectWindow, RoleplayChatApp
 
 # Inicjalizacja klienta
+# Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
-    client = genai.Client(api_key="AQ.Ab8RN6ICn9LUJBfd2EDE4eRXAwgY0uvON5w79Xpc-04wM9Zxew")
+    client = genai.Client(api_key="--TODO--")
 except Exception as e:
     print(f"Błąd inicjalizacji klienta Gemini: {e}")
     client = None
@@ -32,7 +33,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.gemini_chat = None
             return
 
-        # 2. Osobowość i zasady dla AI (System Instruction)
+        # Osobowość i zasady dla AI (System Instruction)
         char = self.character
         system_instruction = """
 Jesteś jednocześnie Mistrzem Gry (Game Masterem) w sesji RPG oraz wcielasz się w postać towarzyszącą graczowi o imieniu: {char['name']}.
@@ -59,7 +60,7 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
                 model="gemini-3.7-flash",
                 config=types.GenerateContentConfig(
                     system_instruction=system_instruction,
-                    temperature=0.8,
+                    temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
 
@@ -69,6 +70,41 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
         except Exception as e:
             self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "system_tag")
             self.gemini_chat = None
+
+    def handle_gemini_error(self, e):
+        """Uniwersalna metoda do parsowania i wyświetlania błędów API (429, 503 i inne)."""
+        error_str = str(e)
+
+        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+            # Próbujemy wyciągnąć czas oczekiwania z komunikatu błędu
+            retry_time_info = "nieznany czas"
+            if "Please retry in" in error_str:
+                try:
+                    # Wyciąganie fragmentu tekstu po "Please retry in "
+                    parts = error_str.split("Please retry in ")
+                    if len(parts) > 1:
+                        retry_time_info = parts[1].split(".")[0] # np. "16h56m40s" lub podobnie
+                except Exception:
+                    pass
+
+            error_msg = (
+                "⏳ **Wyczerpano darmowy dzienny limit zapytań (Błąd 429)**\n"
+                f"• Pozostały czas do odnowienia limitu: **{retry_time_info}**\n\n"
+                "🛠️ **Jak obejść ten problem?**\n"
+                "1. **Płatny plan:** Przejdź w Google AI Studio na plan *Pay-as-you-go* (płacisz tylko za zużycie, co usuwa sztywne dzienne limity darmowego konta).\n"
+                "2. **Inne konto:** Zaloguj się w Google AI Studio na inne konto Google, wygeneruj nowy klucz API i podmień go w aplikacji.\n"
+                "3. **Inny model:** Zmień model w kodzie na taki, który ma osobną pulę darmowych zapytań (jeśli jest dostępny)."
+            )
+        elif "503" in error_str or "UNAVAILABLE" in error_str:
+            error_msg = (
+                "⚠️ Model Gemini jest obecnie mocno obciążony (błąd 503). "
+                "To chwilowy problem po stronie Google. Spróbuj wysłać wiadomość ponownie za kilka sekund."
+            )
+        else:
+            error_msg = f"Wystąpił błąd podczas komunikacji z API: {e}"
+            
+        self.append_message("System", error_msg, "system_tag")
+
 
     def start_adventure(self):
         """Wysyła ukryty prompt startowy, aby Mistrz Gry rozpoczął sesję i przywitał gracza ustami towarzysza."""
@@ -81,7 +117,7 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             response = self.gemini_chat.send_message(intro_prompt)
             self.append_message("Mistrz Gry & Świat", response.text, "bot_tag")
         except Exception as e:
-            self.append_message("System", f"Nie udało się rozpocząć przygody: {e}", "system_tag")
+            self.handle_gemini_error(e)
 
     def simulate_llm_response(self, prompt: str):
         """Nadpisujemy metodę symulacji, aby wysyłać zapytanie do prawdziwego Gemini API."""
@@ -98,66 +134,7 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             self.append_message("Mistrz Gry & Świat", bot_reply, "bot_tag")
         
         except Exception as e:
-            error_str = str(e)
-            if "503" in error_str or "UNAVAILABLE" in error_str:
-                error_msg = (
-                    "⚠️ Model Gemini jest obecnie mocno obciążony (błąd 503). "
-                    "To chwilowy problem po stronie Google. Spróbuj wysłać wiadomość ponownie za kilka sekund."
-                )
-            else:
-                error_msg = f"Wystąpił błąd podczas komunikacji z API: {e}"
-                
-            self.append_message("System", error_msg, "system_tag")
-
-
-'''
-def main():
-    print("=== INICJACJA SILNIKA RPG ===")
-    
-    # 3. Konfiguracja czatu z instrukcją systemową
-    chat = client.chats.create(
-        model="gemini-3.7-flash",
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
-        )
-    )
-
-    # 4. Rozpoczęcie przygody (Prompt inicjujący)
-    start_prompt = (
-        "Rozpocznij przygodę. Stwórz krótkie, klimatyczne wprowadzenie. "
-        "Obudziłem się w opuszczonej ruinie na skraju przeklętego lasu. "
-        "Opisz otoczenie i zapytaj mnie o pierwszy krok."
-    )
-
-    print("\n--- ROZPOCZĘCIE SESJI ---\n")
-    response = chat.send_message(start_prompt)
-    print(f"GM: {response.text}\n")
-
-    # 5. Główna pętla gry (Game Loop)
-    while True:
-        try:
-            player_input = input("Ty: ")
-            
-            # Warunek wyjścia z gry
-            if player_input.lower() in ["exit", "quit", "koniec"]:
-                print("\nSesja zakończona. Do zobaczenia przy kolejnej przygodzie!")
-                break
-                
-            if not player_input.strip():
-                continue
-
-            # Wysłanie decyzji gracza do Gemini
-            response = chat.send_message(player_input)
-            print(f"\nGM: {response.text}\n")
-
-        except KeyboardInterrupt:
-            print("\nPrzerwano sesję.")
-            break
-
-if __name__ == "__main__":
-    main()
-    '''
+            self.handle_gemini_error(e)
 
 # --- Zmodyfikowana funkcja startowa uruchamiająca nową klasę z API ---
 def start_chat_app_with_hybrid_gm(selected_character):
