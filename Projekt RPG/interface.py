@@ -208,3 +208,4 @@ class RoleplayChatApp:
         # Wyświetlenie wiadomości użytkownika jako "Me"
         self.append_message("Me", user_text, "user_tag")
         self.msg_entry.delete(0, tk.END)
+        self.root.after(600, lambda: self.simulate_llm_response(user_text))
