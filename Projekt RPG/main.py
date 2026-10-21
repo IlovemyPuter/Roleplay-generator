@@ -75,7 +75,18 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
         """Uniwersalna metoda do parsowania i wyświetlania błędów API (429, 503 i inne)."""
         error_str = str(e)
 
-        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
+        # Obsługa błędów niepoprawnego klucza API (400 INVALID_ARGUMENT)
+        if "400" in error_str or "API_KEY_INVALID" in error_str or "API key not valid" in error_str:
+            error_msg = (
+                "❌ **Niepoprawny klucz API (Błąd 400)**\n"
+                "• Podany klucz API jest nieważny lub został błędnie wpisany.\n\n"
+                "🛠️ **Jak to naprawić?**\n"
+                "1. Wejdź na stronę **Google AI Studio** (aistudio.google.com).\n"
+                "2. Wygeneruj nowy klucz API.\n"
+                "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową (`$env:GEMINI_API_KEY=\"TWÓJ_KLUCZ\"`) lub podaj go bezpośrednio w kodzie: `client = genai.Client(api_key=\"TWÓJ_KLUCZ\")`."
+            )
+
+        elif "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
             # Próbujemy wyciągnąć czas oczekiwania z komunikatu błędu
             retry_time_info = "nieznany czas"
             if "Please retry in" in error_str:
