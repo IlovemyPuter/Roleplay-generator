@@ -208,25 +208,3 @@ class RoleplayChatApp:
         # Wyświetlenie wiadomości użytkownika jako "Me"
         self.append_message("Me", user_text, "user_tag")
         self.msg_entry.delete(0, tk.END)
-
-        # Symulacja odpowiedzi bota
-        self.root.after(600, lambda: self.simulate_llm_response(user_text))
-
-    def simulate_llm_response(self, prompt: str):
-        # Tymczasowa symulacja
-        bot_reply = f"(Odpowiada zgodnie z profilem '{self.character['name']}'): Otrzymałem wiadomość: '{prompt}'."
-        self.append_message(self.character['name'], bot_reply, "bot_tag")
-
-
-# --- Uruchomienie aplikacji ---
-def start_chat_app(selected_character):
-    chat_root = tk.Tk()
-    RoleplayChatApp(chat_root, selected_character)
-    chat_root.mainloop()
-
-
-'''if __name__ == "__main__":
-    # Krok 1: Uruchomienie okna wyboru postaci
-    select_root = tk.Tk()
-    CharacterSelectWindow(select_root, on_character_selected=start_chat_app)
-    select_root.mainloop()'''
