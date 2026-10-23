@@ -14,7 +14,7 @@ from save_manager import save_game
 # Inicjalizacja klienta
 # Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
-    client = genai.Client(api_key="AQ.Ab8RN6ICn9LUJBfd2EDE4eRXAwgY0uvON5w79Xpc-04wM9Zxew")
+    client = genai.Client(api_key="--TODO--")
 except Exception as e:
     print(f"Błąd inicjalizacji klienta Gemini: {e}")
     client = None
