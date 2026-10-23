@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext
+from save_manager import load_game
 
 CHARACTERS = [
     {
@@ -40,6 +41,31 @@ class CharacterSelectWindow:
         self.on_character_selected = on_character_selected
 
         self.create_widgets()
+
+        self.root.bind("<F8>", lambda event: self.handle_load_game_from_menu())
+
+    def handle_load_game_from_menu(self):
+        """Obsługa naciśnięcia F8 w menu głównym."""
+        success, data = load_game(parent_window=self.root)
+        
+        if success:
+            # Importujemy klasę tutaj, co eliminuje błąd cyklicznego importu
+            from main import HybridGMRoleplayChatApp
+            
+            # 1. Ukrywamy lub niszczymy okno menu głównego
+            self.root.destroy()
+            
+            # 2. Tworzymy nowe okno dla gry
+            game_window = tk.Tk()
+            
+            # 3. Uruchamiamy aplikację czatu, przekazując wczytane dane z pliku JSON
+            # (Przekazujemy character z data["character"] oraz całe data do argumentu save_data)
+            app = HybridGMRoleplayChatApp(game_window, character=data["character"], save_data=data)
+            
+            game_window.mainloop()
+        else:
+            if data != "Anulowano wybór pliku.":
+                print(f"Błąd wczytywania: {data}")
 
     def create_widgets(self):
         # Nagłówek
