@@ -1,10 +1,23 @@
+import os
 import json
 from tkinter import filedialog
 
+# Nazwa folderu na zapisy
+SAVE_DIR = "savegame"
+
+def ensure_save_dir():
+    """Tworzy folder savegame, jeśli jeszcze nie istnieje."""
+    if not os.path.exists(SAVE_DIR):
+        os.makedirs(SAVE_DIR)
+
 def save_game(character, system_instruction, chat_history, parent_window=None):
+    """Zapisuje stan gry do pliku JSON w folderze savegame."""
+    ensure_save_dir()
+    
     """Zapisuje postać, setting oraz historię czatu do pliku JSON."""
     file_path = filedialog.asksaveasfilename(
         parent=parent_window,
+        initialdir=SAVE_DIR,  # Otwiera okno dialogowe bezpośrednio w folderze savegame
         defaultextension=".json",
         filetypes=[("Pliki JSON (*.json)", "*.json"), ("Wszystkie pliki", "*.*")],
         title="Zapisz stan gry"
@@ -27,9 +40,11 @@ def save_game(character, system_instruction, chat_history, parent_window=None):
         return False, str(e)
 
 def load_game(parent_window=None):
+    ensure_save_dir()
     """Wczytuje stan gry z pliku JSON i zwraca słownik z danymi."""
     file_path = filedialog.askopenfilename(
         parent=parent_window,
+        initialdir=SAVE_DIR,
         filetypes=[("Pliki JSON (*.json)", "*.json"), ("Wszystkie pliki", "*.*")],
         title="Wczytaj stan gry"
     )
