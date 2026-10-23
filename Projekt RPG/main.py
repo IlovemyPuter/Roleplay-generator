@@ -1,4 +1,3 @@
-
 ''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
 from google import genai
 from google.genai import types
@@ -8,6 +7,9 @@ import tkinter as tk
 
 # Importujemy dane postaci i klasy okien z pliku interface.py
 from interface import CharacterSelectWindow, RoleplayChatApp
+
+# Importujemy logikę zapisu gry
+from save_manager import save_game
 
 # Inicjalizacja klienta
 # Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
@@ -20,12 +22,80 @@ except Exception as e:
 class HybridGMRoleplayChatApp(RoleplayChatApp):
     """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
 
-    def __init__(self, root, character):
+    def __init__(self, root, character, save_data=None):
         # Inicjalizacja klasycznego okna z interfejsu
         super().__init__(root, character)
+
+        # --- BINDOWANIE KLAWISZA F5 ---
+        root.bind("<F5>", lambda event: self.handle_save())
+
+        if save_data:
+            # TRYB WCZYTANIA: Odtwarzamy stan z pliku JSON
+            self.character = save_data["character"]
+            self.system_instruction = save_data["system_instruction"]
+            self.clean_chat_history = save_data["chat_history"]
+            
+            self.restore_loaded_session()
+        else:
+            # TRYB NOWEJ GRY
+            self.clean_chat_history = []
+            self.system_instruction = ""
+            self.init_gemini_chat()
+
+    def restore_loaded_session(self):
+        """Odtwarza widok czatu oraz sesję Gemini z wczytanej historii."""
+        if not client:
+            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
+            return
+
+        # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
+        for msg in self.clean_chat_history:
+            sender = msg["sender"]
+            text = msg["text"]
+            tag = "bot_tag" if sender == "Mistrz Gry & Świat" else "user_tag"
+            self.append_message(sender, text, tag)
+
+        # 2. Przygotowujemy historię dla struktury SDK Gemini
+        # Konwertujemy historię do formatu typów wiadomości Gemini (user / model)
+        gemini_history = []
+        for msg in self.clean_chat_history:
+            role = "user" if msg["sender"] == "Me" else "model"
+            gemini_history.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part.from_text(text=msg["text"])]
+                )
+            )
+
+        # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
+        try:
+            self.gemini_chat = client.chats.create(
+                model="gemini-3.8-flash",
+                config=types.GenerateContentConfig(
+                    system_instruction=self.system_instruction,
+                    temperature=0.8,
+                ),
+                history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
+            )
+            self.append_message("System", "📂 Stan gry został pomyślnie wczytany! Możesz kontynuować przygodę.", "system_tag")
+        except Exception as e:
+            self.handle_gemini_error(e)
+            self.gemini_chat = None
+
+    # Metoda wywołująca zapis w klasie HybridGMRoleplayChatApp:
+    def handle_save(self):
+        success, result = save_game(
+            character=self.character,
+            system_instruction=self.system_instruction,
+            chat_history=self.clean_chat_history,
+            parent_window=self.root
+        )
         
-        # Inicjalizacja sesji czatu z Gemini dla wybranej postaci
-        self.init_gemini_chat()
+        if success:
+            self.append_message("System", f"💾 Gra została pomyślnie zapisana do pliku: {result}", "system_tag")
+        else:
+            if result != "Anulowano zapis.":
+                self.append_message("System", f"❌ Błąd podczas zapisu gry: {result}", "system_tag")
 
     def init_gemini_chat(self):
         if not client:
@@ -35,7 +105,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
         # Osobowość i zasady dla AI (System Instruction)
         char = self.character
-        system_instruction = """
+        self.system_instruction = f"""
 Jesteś jednocześnie Mistrzem Gry (Game Masterem) w sesji RPG oraz wcielasz się w postać towarzyszącą graczowi o imieniu: {char['name']}.
 
 TWOJE ZADANIA JAKO MISTRZA GRY (GM):
@@ -69,7 +139,7 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             self.gemini_chat = client.chats.create(
                 model="gemini-3.7-flash",
                 config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
+                    system_instruction=self.system_instruction,
                     temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
@@ -95,7 +165,6 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
                 "2. Wygeneruj nowy klucz API.\n"
                 "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową (`$env:GEMINI_API_KEY=\"TWÓJ_KLUCZ\"`) lub podaj go bezpośrednio w kodzie: `client = genai.Client(api_key=\"TWÓJ_KLUCZ\")`."
             )
-
         elif "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
             # Próbujemy wyciągnąć czas oczekiwania z komunikatu błędu
             retry_time_info = "nieznany czas"
@@ -128,7 +197,7 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
 
 
     def start_adventure(self):
-        """Wysyła ukryty prompt startowy, aby Mistrz Gry rozpoczął sesję i przywitał gracza ustami towarzysza."""
+        """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
@@ -139,7 +208,10 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
         )
         try:
             response = self.gemini_chat.send_message(intro_prompt)
+            bot_reply = response.text
             self.append_message("Mistrz Gry & Świat", response.text, "bot_tag")
+            # Zapisujemy do czystej historii
+            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": bot_reply})
         except Exception as e:
             self.handle_gemini_error(e)
 
@@ -149,6 +221,9 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
             return
 
+        # Zapisujemy ruch gracza do czystej historii
+        self.clean_chat_history.append({"sender": "Me", "text": prompt})
+
         try:
             # Wysłanie wiadomości użytkownika do trwającej sesji czatu z modelem
             response = self.gemini_chat.send_message(prompt)
@@ -156,6 +231,9 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             
             # Wyświetlenie odpowiedzi w oknie czatu
             self.append_message("Mistrz Gry & Świat", bot_reply, "bot_tag")
+
+            # Zapisujemy odpowiedź bota do czystej historii
+            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": bot_reply})
         
         except Exception as e:
             self.handle_gemini_error(e)
