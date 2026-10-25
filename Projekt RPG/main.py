@@ -289,13 +289,14 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
                 self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
 
     def start_adventure(self):
-        """Wysyła ukryty prompt startowy ze streamowaniem i podziałem."""
+        """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
             f"\"{self.character['role_and_background']}\". "
             "Następnie wpisz znacznik [TOWARZYSZ]: i spraw, aby moja towarzyszka/mój towarzysz "
-            f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu."
+            f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu,"
+            "komentując obecną sytuację, bez podawania gotowych propozycji dalszych kroków."
         )
         try:
             print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
@@ -312,6 +313,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
             return
 
+        # Zapisujemy ruch gracza do czystej historii
         self.clean_chat_history.append({"sender": "Me", "text": prompt})
 
         try:
