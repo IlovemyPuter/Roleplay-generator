@@ -77,8 +77,6 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
             return
 
-        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
-
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
             sender = msg["sender"]
@@ -133,6 +131,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "system_tag")
             self.gemini_chat = None
             return
+
+        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
 
         # Osobowość i zasady dla AI (System Instruction)
         char = self.character
