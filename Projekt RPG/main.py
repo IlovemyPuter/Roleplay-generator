@@ -309,11 +309,8 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         try:
             print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
             response_stream = self.gemini_chat.send_message_stream(intro_prompt)
-            
-            # Przekazujemy właściwy strumień do parsowania
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono pobieranie wprowadzenia.")
-
         except Exception as e:
             print(f"❌ [API] Błąd podczas generowania wprowadzenia: {e}")
             self.handle_gemini_error(e)
@@ -332,7 +329,6 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
             response_stream = self.gemini_chat.send_message_stream(prompt)
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono odbieranie odpowiedzi od Gemini.")
-        
         except Exception as e:
             print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
             self.handle_gemini_error(e)
