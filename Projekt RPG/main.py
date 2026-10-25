@@ -198,6 +198,10 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
 
     def start_adventure(self):
         """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
+        if not self.gemini_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
+            return
+
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
@@ -208,8 +212,10 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
         )
         try:
             response = self.gemini_chat.send_message(intro_prompt)
-            bot_reply = response.text
-            self.append_message("Mistrz Gry & Świat", response.text, "bot_tag")
+            # Zabezpieczenie przed None - jeśli odpowiedź jest pusta, podstawiamy tekst zastępczy
+            bot_reply = response.text if response and response.text else "[Brak odpowiedzi / Treść zablokowana]"
+            
+            self.append_message("Mistrz Gry & Świat", bot_reply, "bot_tag")
             # Zapisujemy do czystej historii
             self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": bot_reply})
         except Exception as e:
@@ -227,7 +233,8 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
         try:
             # Wysłanie wiadomości użytkownika do trwającej sesji czatu z modelem
             response = self.gemini_chat.send_message(prompt)
-            bot_reply = response.text
+            # Bezpieczne przypisanie tekstu dla Pylance (str zamiast str | None)
+            bot_reply = response.text if response and response.text else "[Brak odpowiedzi / Treść zablokowana]"
             
             # Wyświetlenie odpowiedzi w oknie czatu
             self.append_message("Mistrz Gry & Świat", bot_reply, "bot_tag")
