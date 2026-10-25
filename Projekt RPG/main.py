@@ -1,6 +1,7 @@
-''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
 import os
 from dotenv import load_dotenv
+
+''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
 from google import genai
 from google.genai import types
 
@@ -17,6 +18,8 @@ from save_manager import save_game, load_game
 load_dotenv()
 
 api_key = os.getenv("GEMINI_API_KEY")
+model = os.getenv("GEMINI_MODEL")
+
 # Inicjalizacja klienta
 # Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
@@ -74,6 +77,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
             return
 
+        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
+
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
             sender = msg["sender"]
@@ -96,7 +101,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
         try:
             self.gemini_chat = client.chats.create(
-                model="gemini-3.8-flash",
+                model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     temperature=0.8,
@@ -128,8 +133,6 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "system_tag")
             self.gemini_chat = None
             return
-
-        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
 
         # Osobowość i zasady dla AI (System Instruction)
         char = self.character
@@ -172,13 +175,14 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         try:
             # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
             self.gemini_chat = client.chats.create(
-                model="gemini",
+                model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
+
             # Automatycznie generujemy początek przygody od razu po starcie czatu
             self.start_adventure()
 
@@ -290,6 +294,10 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 
     def start_adventure(self):
         """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
+        if not self.gemini_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
+            return
+
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
@@ -301,8 +309,11 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         try:
             print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
             response_stream = self.gemini_chat.send_message_stream(intro_prompt)
+            
+            # Przekazujemy właściwy strumień do parsowania
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono pobieranie wprowadzenia.")
+
         except Exception as e:
             print(f"❌ [API] Błąd podczas generowania wprowadzenia: {e}")
             self.handle_gemini_error(e)
@@ -321,6 +332,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
             response_stream = self.gemini_chat.send_message_stream(prompt)
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono odbieranie odpowiedzi od Gemini.")
+        
         except Exception as e:
             print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
             self.handle_gemini_error(e)
