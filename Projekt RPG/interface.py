@@ -42,10 +42,9 @@ class CharacterSelectWindow:
 
         self.create_widgets()
 
-        self.root.bind("<F8>", lambda event: self.handle_load_game_from_menu())
 
     def handle_load_game_from_menu(self):
-        """Obsługa naciśnięcia F8 w menu głównym."""
+        """Obsługa wczytywania gry z menu głównego."""
         success, data = load_game(parent_window=self.root)
         
         if success:
@@ -54,10 +53,8 @@ class CharacterSelectWindow:
             
             # 1. Ukrywamy lub niszczymy okno menu głównego
             self.root.destroy()
-            
             # 2. Tworzymy nowe okno dla gry
             game_window = tk.Tk()
-            
             # 3. Uruchamiamy aplikację czatu, przekazując wczytane dane z pliku JSON
             # (Przekazujemy character z data["character"] oraz całe data do argumentu save_data)
             app = HybridGMRoleplayChatApp(game_window, character=data["character"], save_data=data)
@@ -68,13 +65,23 @@ class CharacterSelectWindow:
                 print(f"Błąd wczytywania: {data}")
 
     def create_widgets(self):
-        # Nagłówek
+        top_frame = ttk.Frame(self.root)
+        top_frame.pack(fill=tk.X, padx=20, pady=20)
+
         header_label = ttk.Label(
-            self.root,
+            top_frame,
             text="Wybierz postać do rozpoczęcia sesji roleplay",
             font=("Arial", 16, "bold")
         )
-        header_label.pack(pady=20)
+        header_label.pack(side=tk.LEFT)
+
+        # Przycisk wczytywania w oknie wyboru postaci
+        load_btn = ttk.Button(
+            top_frame,
+            text="📁 Wczytaj grę",
+            command=self.handle_load_game_from_menu
+        )
+        load_btn.pack(side=tk.RIGHT)
 
         # Kontener główny na scrollowalny obszar
         container = ttk.Frame(self.root)
@@ -175,6 +182,17 @@ class RoleplayChatApp:
     def create_widgets(self):
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
+        # ------------------------------------------------------------------
+        # 0. Pasek przycisków akcji nad czatem (Zapisz / Wczytaj)
+        # ------------------------------------------------------------------
+        action_bar = ttk.Frame(main_frame)
+        action_bar.pack(fill=tk.X, pady=(0, 5))
+
+        save_btn = ttk.Button(action_bar, text="💾 Zapisz grę", command=lambda: getattr(self, 'handle_save', lambda: None)())
+        save_btn.pack(side=tk.LEFT, padx=(0, 5))
+
+        load_btn = ttk.Button(action_bar, text="📂 Wczytaj grę", command=lambda: getattr(self, 'handle_load_in_game', lambda: None)())
+        load_btn.pack(side=tk.LEFT)
 
         # ------------------------------------------------------------------
         # 1. Historia konwersacji
@@ -194,6 +212,7 @@ class RoleplayChatApp:
         # Style tagów tekstowych
         self.chat_display.tag_config("user_tag", foreground="#0b5ed7", font=("Arial", 11, "bold"))
         self.chat_display.tag_config("bot_tag", foreground="#198754", font=("Arial", 11, "bold"))
+        self.chat_display.tag_config("companion_tag", foreground="#6f42c1", font=("Arial", 11, "bold"))
         self.chat_display.tag_config("system_tag", foreground="#6c757d", font=("Arial", 10, "italic"))
 
         # ------------------------------------------------------------------
@@ -235,3 +254,28 @@ class RoleplayChatApp:
         self.append_message("Me", user_text, "user_tag")
         self.msg_entry.delete(0, tk.END)
         self.root.after(600, lambda: self.simulate_llm_response(user_text))
+
+    def start_streaming_message(self, sender: str, tag_name: str):
+        """Rozpoczyna nową wiadomość strumieniową w oknie czatu[cite: 2]."""
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, f"{sender}: ", tag_name)
+        # Zapisujemy indeks, od którego zaczyna się treść wiadomości
+        self._stream_start_index = self.chat_display.index("end-1c")
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+
+    def update_streaming_message(self, text: str):
+        """Aktualizuje treść wiadomości w trakcie streamowania tokenów[cite: 2]."""
+        self.chat_display.config(state=tk.NORMAL)
+        # Usuwamy dotychczasowy tekst odpowiedzi i wstawiamy nowy, powiększony fragment
+        self.chat_display.delete(self._stream_start_index, tk.END)
+        self.chat_display.insert(tk.END, text)
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+
+    def finish_streaming_message(self):
+        """Kończy strumieniowanie, dodając odstępy na końcu[cite: 2]."""
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, "\n\n")
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)

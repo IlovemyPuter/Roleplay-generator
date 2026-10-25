@@ -1,4 +1,6 @@
 ''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
+import os
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
@@ -9,12 +11,16 @@ import tkinter as tk
 from interface import CharacterSelectWindow, RoleplayChatApp
 
 # Importujemy logikę zapisu gry
-from save_manager import save_game
+from save_manager import save_game, load_game
 
+#Ładujemy zmienne z pliku .env znajdującego się w folderze projektu
+load_dotenv()
+
+api_key = os.getenv("GEMINI_API_KEY")
 # Inicjalizacja klienta
 # Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
-    client = genai.Client(api_key="--TODO--")
+    client = genai.Client(api_key=api_key)
 except Exception as e:
     print(f"Błąd inicjalizacji klienta Gemini: {e}")
     client = None
@@ -26,8 +32,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         # Inicjalizacja klasycznego okna z interfejsu
         super().__init__(root, character)
 
-        # --- BINDOWANIE KLAWISZA F5 ---
+        # --- BINDOWANIE KLAWISZY ---
         root.bind("<F5>", lambda event: self.handle_save())
+        root.bind("<F8>", lambda event: self.handle_load_in_game())
 
         if save_data:
             # TRYB WCZYTANIA: Odtwarzamy stan z pliku JSON
@@ -35,12 +42,31 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.system_instruction = save_data["system_instruction"]
             self.clean_chat_history = save_data["chat_history"]
             
-            self.restore_loaded_session()
+            self.root.after(100, self.restore_loaded_session)
         else:
             # TRYB NOWEJ GRY
             self.clean_chat_history = []
             self.system_instruction = ""
-            self.init_gemini_chat()
+            self.root.after(100, self.init_gemini_chat)
+
+    def handle_load_in_game(self):
+        """Obsługa wczytywania gry z poziomu aktywnego czatu (przycisk lub F8)."""
+        success, data = load_game(parent_window=self.root)
+        if success:
+            # Podmieniamy stan bieżącej sesji na wczytany
+            self.character = data["character"]
+            self.system_instruction = data["system_instruction"]
+            self.clean_chat_history = data["chat_history"]
+
+            # Czyścimy widok czatu i odtwarzamy sesję od nowa
+            self.chat_display.config(state=tk.NORMAL)
+            self.chat_display.delete("1.0", tk.END)
+            self.chat_display.config(state=tk.DISABLED)
+
+            self.restore_loaded_session()
+        else:
+            if data != "Anulowano wybór pliku.":
+                print(f"❌ Błąd wczytywania: {data}")
 
     def restore_loaded_session(self):
         """Odtwarza widok czatu oraz sesję Gemini z wczytanej historii."""
@@ -103,6 +129,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.gemini_chat = None
             return
 
+        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
+
         # Osobowość i zasady dla AI (System Instruction)
         char = self.character
         self.system_instruction = f"""
@@ -132,22 +160,30 @@ TWOJA ROLA JAKO TOWARZYSZA ({char['name']}):
 3. **KONTROLA ŚWIATA I FAKTÓW (ZAKAZ TWORZENIA RZECZYWISTOŚCI PRZEZ GRACZA):** Tylko i wyłącznie Mistrz Gry decyduje o tym, co znajduje się w otoczeniu, jakie postacie tam są i co się dzieje. Gracz NIE MA MOCY tworzenia elementów świata. Jeśli gracz spróbuje wejść w interakcję z czymś, czego nie było w opisie (np. "flirtuję z duchem" w pustym pokoju albo "wyciągam ukryty miecz laserowy"), **Mistrz Gry musi to bezwzględnie zablokować**. Zareaguj realizmem: gracz mówi do pustej ściany / macha rękami w powietrzu, a {char['name']} patrzy na niego jak na wariata lub pyta z drwiną, z kim do cholery rozmawia. Nigdy nie pozwól, aby wymysł gracza nagle stał się rzeczywistością, jeśli wcześniej nie został opisany przez GM-a.
 
 STRUKTURA ODPOWIEDZI:
-W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co się dzieje w świecie), a następnie wpleć naturalną reakcję, dialog lub działanie {char['name']} jako towarzysza podróży gracza. Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
+W każdej odpowiedzi podziel swoją wypowiedź na dwie wyraźne części:
+1. Najpierw opisz sytuację jako bezstronny Mistrz Gry (co się dzieje w świecie).
+2. Następnie w nowej linijce dodaj słowo kluczowe `[TOWARZYSZ]:`, po którym następuje wypowiedź lub reakcja postaci ({char['name']}) w jej unikalnym stylu. 
+Przykład struktury:
+Opis świata i otoczenia przez Mistrza Gry...
+[TOWARZYSZ]: Wypowiedź towarzysza...
+
+Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 """
         try:
             # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
             self.gemini_chat = client.chats.create(
-                model="gemini-3.7-flash",
+                model="gemini",
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
-
+            print("✅ [API] Sesja czatu została pomyślnie utworzona.")
             # Automatycznie generujemy początek przygody od razu po starcie czatu
             self.start_adventure()
 
         except Exception as e:
+            print(f"❌ [API] Błąd tworzenia sesji: {e}")
             self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "system_tag")
             self.gemini_chat = None
 
@@ -195,47 +231,96 @@ W każdej odpowiedzi najpierw opisz sytuację jako bezstronny Mistrz Gry (co si�
             
         self.append_message("System", error_msg, "system_tag")
 
+    def stream_and_parse_response(self, response_stream):
+        """Na bieżąco analizuje strumień i rozdziela tekst na GM i Towarzysza."""
+        full_text = ""
+        gm_finalized = False
+
+        # Zaczynamy streamować jako Mistrz Gry
+        self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
+
+        for chunk in response_stream:
+            if chunk.text:
+                full_text += chunk.text
+
+                if not gm_finalized:
+                    # Sprawdzamy czy znacznik [TOWARZYSZ]: pojawił się już w tekście
+                    if "[TOWARZYSZ]:" in full_text:
+                        parts = full_text.split("[TOWARZYSZ]:", 1)
+                        gm_text = parts[0].strip()
+                        comp_text = parts[1].strip() if len(parts) > 1 else ""
+
+                        # 1. Zamykamy dymkę Mistrza Gry
+                        self.update_streaming_message(gm_text)
+                        self.finish_streaming_message()
+                        if gm_text:
+                            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+
+                        # 2. Otwieramy nową dymkę dla towarzysza z jego imieniem i kolorem
+                        companion_name = self.character['name']
+                        self.start_streaming_message(companion_name, "companion_tag")
+                        self.update_streaming_message(comp_text)
+
+                        gm_finalized = True
+                    else:
+                        # Wciąż streamujemy opis Mistrza Gry
+                        self.update_streaming_message(full_text)
+                else:
+                    # Mistrz Gry zamknięty – streamujemy dalej resztę wypowiedzi towarzysza
+                    parts = full_text.split("[TOWARZYSZ]:", 1)
+                    comp_text = parts[1].strip() if len(parts) > 1 else ""
+                    self.update_streaming_message(comp_text)
+
+                self.root.update()  # Odświeżanie interfejsu w locie
+
+        # Zakończenie strumienia (gdyby model nie podał znacznika)
+        if not gm_finalized:
+            gm_text = full_text.strip()
+            self.update_streaming_message(gm_text)
+            self.finish_streaming_message()
+            if gm_text:
+                self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+        else:
+            parts = full_text.split("[TOWARZYSZ]:", 1)
+            comp_text = parts[1].strip() if len(parts) > 1 else ""
+            self.finish_streaming_message()
+            companion_name = self.character['name']
+            if comp_text:
+                self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
 
     def start_adventure(self):
-        """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
+        """Wysyła ukryty prompt startowy ze streamowaniem i podziałem."""
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
             f"\"{self.character['role_and_background']}\". "
-            "Następnie spraw, aby moja towarzyszka/mój towarzysz "
-            f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu, "
-            "komentując obecną sytuację, bez podawania gotowych propozycji dalszych kroków."
+            "Następnie wpisz znacznik [TOWARZYSZ]: i spraw, aby moja towarzyszka/mój towarzysz "
+            f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu."
         )
         try:
-            response = self.gemini_chat.send_message(intro_prompt)
-            bot_reply = response.text
-            self.append_message("Mistrz Gry & Świat", response.text, "bot_tag")
-            # Zapisujemy do czystej historii
-            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": bot_reply})
+            print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
+            response_stream = self.gemini_chat.send_message_stream(intro_prompt)
+            self.stream_and_parse_response(response_stream)
+            print("✅ [API] Zakończono pobieranie wprowadzenia.")
         except Exception as e:
+            print(f"❌ [API] Błąd podczas generowania wprowadzenia: {e}")
             self.handle_gemini_error(e)
 
     def simulate_llm_response(self, prompt: str):
-        """Nadpisujemy metodę symulacji, aby wysyłać zapytanie do prawdziwego Gemini API."""
+        """Wysyła zapytanie gracza i odbiera odpowiedź strumieniowo z podziałem."""
         if not self.gemini_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
             return
 
-        # Zapisujemy ruch gracza do czystej historii
         self.clean_chat_history.append({"sender": "Me", "text": prompt})
 
         try:
-            # Wysłanie wiadomości użytkownika do trwającej sesji czatu z modelem
-            response = self.gemini_chat.send_message(prompt)
-            bot_reply = response.text
-            
-            # Wyświetlenie odpowiedzi w oknie czatu
-            self.append_message("Mistrz Gry & Świat", bot_reply, "bot_tag")
-
-            # Zapisujemy odpowiedź bota do czystej historii
-            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": bot_reply})
-        
+            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
+            response_stream = self.gemini_chat.send_message_stream(prompt)
+            self.stream_and_parse_response(response_stream)
+            print("✅ [API] Zakończono odbieranie odpowiedzi od Gemini.")
         except Exception as e:
+            print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
             self.handle_gemini_error(e)
 
 # --- Zmodyfikowana funkcja startowa uruchamiająca nową klasę z API ---
