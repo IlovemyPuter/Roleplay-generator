@@ -1,5 +1,25 @@
 # Roleplay-generator
 
+## Konfiguracja wstępna
+
+Aby uruchomić projekt lokalnie, rozpocznij od utworzenia i aktywacji wirtualnego środowiska Pythona. Następnie zainstaluj wymagane zależności i skonfiguruj klucze dostępowe w pliku `.env`.
+
+```bash
+# Utworzenie i aktywacja środowiska wirtualnego
+python -m venv .venv
+.venv\Scripts\activate
+
+# Instalacja wymaganych pakietów
+pip install -r requirements.txt
+```
+
+Utwórz plik `.env` w głównym katalogu projektu i uzupełnij go o swój klucz API z Google AI Studio oraz preferowany model Gemini (np. gemini-3.5-flash-lite):
+
+```env
+GEMINI_API_KEY=twój_klucz_api_tutaj
+GEMINI_MODEL=wybrany_model
+```
+
 ## Problem użytkownika
 Gracz chce prowadzić wciągającą sesję RPG, w której postacie reagują na jego decyzje, a fabuła rozwija się bez konieczności posiadania Game Mastera.
 

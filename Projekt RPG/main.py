@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 
-''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
 from google import genai
 from google.genai import types
 
@@ -21,7 +20,6 @@ api_key = os.getenv("GEMINI_API_KEY")
 model = os.getenv("GEMINI_MODEL")
 
 # Inicjalizacja klienta
-# Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
     client = genai.Client(api_key=api_key)
 except Exception as e:
