@@ -13,8 +13,8 @@ from interface import CharacterSelectWindow, RoleplayChatApp
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
-#Ładujemy zmienne z pliku .env znajdującego się w folderze projektu
-load_dotenv()
+# .env leży w katalogu głównym repozytorium, jeden poziom nad tym plikiem.
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 api_key = os.getenv("GEMINI_API_KEY")
 model = os.getenv("GEMINI_MODEL")

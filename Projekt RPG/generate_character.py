@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     from dotenv import load_dotenv
 
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise SystemExit(
