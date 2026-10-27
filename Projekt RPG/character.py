@@ -31,5 +31,5 @@ class Character(BaseModel):
 
 
 def validate_character_response(response_text: str) -> Character:
-    """Odczytaj JSON i sprawdź pola; nieprawidłowy wynik zgłasza ValidationError."""
+    """Odczytuje JSON i sprawdza pola; nieprawidłowy wynik zgłasza ValidationError."""
     return Character.model_validate_json(response_text)
