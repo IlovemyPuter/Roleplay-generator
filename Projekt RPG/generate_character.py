@@ -59,24 +59,3 @@ def generate_character(
     raise Exception(
         f"Brak poprawnej postaci po {max_attempts} próbach."
     ) from last_error
-
-
-if __name__ == "__main__":
-    import sys
-
-    from dotenv import load_dotenv
-
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise SystemExit(
-            "Brak GEMINI_API_KEY. Ustaw klucz w pliku .env lub w środowisku."
-        )
-
-    description = " ".join(sys.argv[1:]).strip() or input("Opis postaci: ")
-    character = generate_character(
-        description,
-        genai.Client(api_key=api_key),
-        model=os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
-    )
-    print(json.dumps(character.model_dump(), ensure_ascii=False, indent=2))

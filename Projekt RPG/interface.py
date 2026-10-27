@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from character_manager import load_characters
+from generate_character import generate_character
 from save_manager import load_game
 
 
@@ -16,6 +17,7 @@ class CharacterSelectWindow:
 
         self.create_widgets()
 
+        self.root.bind("<F8>", lambda event: self.handle_load_game_from_menu())
 
     def handle_load_game_from_menu(self):
         """Obsługa wczytywania gry z menu głównego."""
@@ -38,24 +40,105 @@ class CharacterSelectWindow:
             if data != "Anulowano wybór pliku.":
                 print(f"Błąd wczytywania: {data}")
 
+    def trigger_character_generation(self):
+        description = self.description_entry.get("1.0", tk.END).strip()
+        
+        # Jeśli pole jest puste lub wciąż ma tekst placeholdera, przerywamy
+        if not description or description == self.placeholder_text:
+            messagebox.showwarning("Błąd", "Najpierw wpisz opis nowej postaci w polu tekstowym!", parent=self.root)
+            return
+
+        try:
+            import os
+            from google import genai
+            from character_manager import save_character, load_characters
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                messagebox.showerror("Błąd", "Brak klucza GEMINI_API_KEY w zmiennych środowiskowych.", parent=self.root)
+                return
+
+            client = genai.Client(api_key=api_key)
+            
+            # Informacja dla użytkownika (generowanie może chwilę potrwać)
+            messagebox.showinfo("Generowanie", "Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
+            
+            # 1. Wywołanie funkcji generującej (zwraca obiekt Character)[cite: 2]
+            new_character = generate_character(description, client)
+            
+            # 2. Zapisanie postaci do pliku JSON w folderze characters/[cite: 4]
+            saved_path = save_character(new_character)
+            print(f"✅ Zapisano nową postać do pliku: {saved_path}")
+
+            # 3. Czyszczenie pola tekstowego
+            self.description_entry.delete("1.0", tk.END)
+            self.description_entry.insert("1.0", self.placeholder_text)
+            self.description_entry.config(foreground="grey")
+
+            # 4. Odświeżenie kafelków w oknie menu, aby nowa postać pojawiła się wizualnie
+            self.refresh_character_tiles()
+
+            messagebox.showinfo("Sukces", f"Postać została pomyślnie wygenerowana i zapisana!\nMożesz ją teraz wybrać z listy.", parent=self.root) # lub info
+            
+        except Exception as e:
+            messagebox.showerror("Błąd generowania", f"Nie udało się wygenerować postaci:\n{e}", parent=self.root)
+
     def create_widgets(self):
         top_frame = ttk.Frame(self.root)
-        top_frame.pack(fill=tk.X, padx=20, pady=20)
+        top_frame.pack(fill=tk.X, padx=20, pady=15)
 
         header_label = ttk.Label(
             top_frame,
-            text="Wybierz postać do rozpoczęcia sesji roleplay",
-            font=("Arial", 16, "bold")
+            text="Wybierz postać lub wpisz opis i wygeneruj nową",
+            font=("Arial", 14, "bold")
         )
-        header_label.pack(side=tk.LEFT)
+        header_label.pack(side=tk.TOP, anchor="w", pady=(0, 10))
 
-        # Przycisk wczytywania w oknie wyboru postaci
+        # --- Panela górna z polem wielolinijkowym i przyciskami ---
+        input_container = ttk.Frame(top_frame)
+        input_container.pack(fill=tk.X, expand=True)
+
+        # 1. Wielolinijkowe pole tekstowe na opis nowej postaci (ScrolledText / Text)
+        self.description_entry = scrolledtext.ScrolledText(
+            input_container,
+            height=4,               # Wysokość odpowiadająca prawemu panelowi z przyciskami
+            font=("Arial", 10),
+            wrap=tk.WORD,
+            background="#ffffff"
+        )
+        self.description_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
+        # --- OBSŁUGA NAPISU FANTOMOWEGO (PLACEHOLDER) ---
+        self.placeholder_text = "Wpisz opis nowej postaci tutaj..."
+        
+        # Wstawiamy placeholder na start i ustawiamy szary kolor
+        self.description_entry.insert("1.0", self.placeholder_text)
+        self.description_entry.config(foreground="grey")
+
+        # Biny wykrywające kliknięcie (wejście) i opuszczenie pola
+        self.description_entry.bind("<FocusIn>", self._on_placeholder_focus_in)
+        self.description_entry.bind("<FocusOut>", self._on_placeholder_focus_out)
+
+        # 2. Ramka po prawej stronie na przyciski o jednakowej szerokości
+        btn_box = ttk.Frame(input_container)
+        btn_box.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_width = 18  # Jednakowa szerokość obu przycisków w znakach
+
+        gen_btn = ttk.Button(
+            btn_box, 
+            text="✨ Generuj", 
+            width=btn_width,
+            command=self.trigger_character_generation
+        )
+        gen_btn.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+
         load_btn = ttk.Button(
-            top_frame,
+            btn_box,
             text="📁 Wczytaj grę",
+            width=btn_width,
             command=self.handle_load_game_from_menu
         )
-        load_btn.pack(side=tk.RIGHT)
+        load_btn.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Kontener główny na scrollowalny obszar
         container = ttk.Frame(self.root)
@@ -99,6 +182,39 @@ class CharacterSelectWindow:
 
         # Obsługa przewijania kółkiem myszy
         self.canvas.bind_all("<Shift-MouseWheel>", self._on_mouse_wheel)
+
+    def _on_placeholder_focus_in(self, event):
+        """Usuwa placeholder po kliknięciu w pole tekstowe."""
+        current_text = self.description_entry.get("1.0", tk.END).strip()
+        if current_text == self.placeholder_text:
+            self.description_entry.delete("1.0", tk.END)
+            self.description_entry.config(foreground="black")  # Przywracamy normalny czarny tekst
+
+    def _on_placeholder_focus_out(self, event):
+        """Przywraca placeholder, jeśli pole zostało puste po wyjściu."""
+        current_text = self.description_entry.get("1.0", tk.END).strip()
+        if not current_text:
+            self.description_entry.insert("1.0", self.placeholder_text)
+            self.description_entry.config(foreground="grey")
+
+    def refresh_character_tiles(self):
+        """Odświeża listę kafelków w oknie wyboru."""
+        # Usuwamy stare kafelki z ramki
+        for widget in self.tiles_frame.winfo_children():
+            widget.destroy()
+
+        # Wczytujemy postacie na nowo (w tym nowo dodaną)[cite: 4]
+        characters = load_characters()
+        if not characters:
+            empty_label = ttk.Label(
+                self.tiles_frame,
+                text="Brak postaci w folderze characters/.",
+                font=("Arial", 12),
+            )
+            empty_label.pack(padx=20, pady=40)
+        else:
+            for char in characters:
+                self.create_character_tile(char)
 
     def create_character_tile(self, char):
         """Tworzy pojedynczy kafelek dla postaci ze wszystkimi danymi z szablonu."""
