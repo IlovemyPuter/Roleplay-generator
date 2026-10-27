@@ -1,6 +1,5 @@
 import json
 import os
-from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -9,8 +8,8 @@ from pydantic import ValidationError
 from character import Character, validate_character_response
 
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-SYSTEM_INSTRUCTION_PATH = (
-    Path(__file__).resolve().parent / "prompts" / "generate-character.system.md"
+SYSTEM_INSTRUCTION_PATH = os.path.join(
+    os.path.dirname(__file__), "prompts", "generate-character.system.md"
 )
 
 
@@ -26,8 +25,11 @@ def generate_character(
     if not description:
         raise ValueError("Opis postaci nie może być pusty.")
 
+    with open(SYSTEM_INSTRUCTION_PATH, encoding="utf-8") as instruction_file:
+        system_instruction = instruction_file.read()
+
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8"),
+        system_instruction=system_instruction,
         response_mime_type="application/json",
         response_json_schema=Character.model_json_schema(),
     )
@@ -64,7 +66,7 @@ if __name__ == "__main__":
 
     from dotenv import load_dotenv
 
-    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         raise SystemExit(
