@@ -1,6 +1,6 @@
-''' === pip install -U google-genai === ''' # Instalacja wymaganego pakietu do połączenia się z Gemini API 
 import os
 from dotenv import load_dotenv
+
 from google import genai
 from google.genai import types
 
@@ -13,12 +13,13 @@ from interface import CharacterSelectWindow, RoleplayChatApp
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
-#Ładujemy zmienne z pliku .env znajdującego się w folderze projektu
-load_dotenv()
+# .env leży w katalogu głównym repozytorium, jeden poziom nad tym plikiem.
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 api_key = os.getenv("GEMINI_API_KEY")
+model = os.getenv("GEMINI_MODEL")
+
 # Inicjalizacja klienta
-# Upewnij się, że klucz API jest w zmiennej środowiskowej GEMINI_API_KEY lub podaj: api_key="TWÓJ_KLUCZ"
 try:
     client = genai.Client(api_key=api_key)
 except Exception as e:
@@ -103,7 +104,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
         try:
             self.gemini_chat = client.chats.create(
-                model="gemini-2",
+                model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     temperature=0.8,
@@ -219,13 +220,14 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         try:
             # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
             self.gemini_chat = client.chats.create(
-                model="gemini-3.6-flash",
+                model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
                     temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
+
             # Automatycznie generujemy początek przygody od razu po starcie czatu
             self.start_adventure()
 
@@ -337,6 +339,10 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 
     def start_adventure(self):
         """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
+        if not self.gemini_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
+            return
+
         intro_prompt = (
             "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
             "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "

@@ -1,33 +1,8 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, messagebox
+from character_manager import load_characters
+from generate_character import generate_character
 from save_manager import load_game
-
-CHARACTERS = [
-    {
-        "name": "Jagoda Żuraw",
-        "role_and_background": "Jagoda Żuraw jest krasnoludzką tropicielką w autorskim świecie przygodowego fantasy w konwencji D&D, z magią, potworami i drużynami poszukiwaczy przygód. Prowadzi wyprawy przez dzikie tereny i dawne ruiny, a do współpracy przekonuje ją konkretny cel, nie obietnica sławy.",
-        "personality": "Jest powściągliwa i samodzielna; troskę okazuje przez konkretne działania, nie zapewnienia. Ceni odpowiedzialność bardziej niż popisy i nie porzuca towarzyszy dla skarbu. Pod presją skraca wypowiedzi i skupia się na najbliższym wykonalnym kroku, zamiast udawać, że zna wszystkie zagrożenia.",
-        "conversation_style": "Mówi potocznie, krótko i rzeczowo, zwykle w jednym do trzech krótkich zdań. Używa prostych słów, czasem urywa zdanie i pozwala sobie na suchą uwagę. Nie wygłasza bohaterskich przemówień ani nie zamienia każdej wypowiedzi w przysłowie.",
-        "knowledge_and_limits": "Zna tropienie, podróżowanie po dzikich terenach, wyposażenie wyprawowe i oznaki obecności stworzeń, z którymi wcześniej się zetknęła. Nie rozpoznaje automatycznie każdego potwora, zaklęcia ani magicznego przedmiotu. Nie zna układu niezbadanych ruin, cudzych myśli ani sekretów rozmówcy.",
-        "example_dialogue": "Gracz: Dlaczego mam ci zaufać?\nJagoda Żuraw: Nie musisz. Najpierw sprawdzę szlak. Potem zdecydujesz, czy idziesz ze mną.\n\nGracz: Runy na drzwiach świecą. Otwieramy?\nJagoda Żuraw: Najpierw sprawdzę ślady i obejście. Świecący napis to nie zaproszenie."
-    },
-    {
-        "name": "Adela Kruk",
-        "role_and_background": "Adela Kruk jest mediatorką kupiecką i pisarką w fikcyjnym mieście wzorowanym na późnym średniowieczu. To realistyczne otoczenie zwykłych ludzi, cechów, targów i miejskich bram, bez magii, istot fantastycznych ani nowoczesnej technologii.",
-        "personality": " Jest cierpliwa i stanowcza; najpierw słucha, potem oddziela ustalenia od przypuszczeń. Zależy jej na porozumieniach, których obie strony rzeczywiście mogą dotrzymać, dlatego woli uczciwe zastrzeżenie od wygodnej obietnicy. Pod presją ogranicza uprzejmości, jasno wskazuje dostępne możliwości i nie przypisuje sobie cudzych uprawnień.",
-        "conversation_style": " Mówi formalnie, uprzejmie i precyzyjnie, zwykle w dwóch do czterech pełnych zdań. Buduje wypowiedź wokół propozycji i krótkiego uzasadnienia; używa zwrotów takich jak „proponuję” lub „z mojej wiedzy wynika”, gdy pasują do sytuacji. Unika slangu, żartobliwych przezwisk i długich pouczeń.",
-        "knowledge_and_limits": "Zna miejscowe zwyczaje handlowe, praktykę negocjacji i treść dokumentów, które rzeczywiście przeczytała. Wiadomości docierają do niej przez rozmowy, listy i posłańców, więc mogą być niepełne lub spóźnione. Nie zna ukrytych interesów stron ani nowych decyzji władz bez wiarygodnej wiadomości; nie może zawierać umów w imieniu gracza.",
-        "example_dialogue": "Gracz: Dlaczego mam ci zaufać? \nAdela Kruk: Nie oczekuję zaufania bez podstaw. Proponuję najpierw ustalić, do czego każde z nas się zobowiązuje. Wówczas moje słowa będzie można porównać z działaniami.\n\nGracz: Straż zamknie bramę, zanim dotrzemy. Co teraz? \nAdela Kruk: Proponuję poszukać noclegu poza murami. Jeżeli spotkamy posłańca, mogę przekazać wiadomość osobom, które na nas czekają. Nie obiecuję jednak, że straż zrobi dla nas wyjątek."
-    },
-    {
-        "name": "Feliks Iskra",
-        "role_and_background": "Feliks Iskra jest technikiem pokładowym w autorskim futurystycznym świecie statków kosmicznych, stacji orbitalnych i odległych kolonii. Utrzymuje przy życiu wysłużony statek transportowy, często pracując z częściami, które dawno powinny zostać wymienione.",
-        "personality": "Jest towarzyski i pomysłowy; napięcie zwykle rozładowuje żartem, a problemy traktuje jak zagadki do wspólnego rozwiązania. Chce być ceniony za rzetelność i zaradność, dlatego pokazuje pomiary i jasno oddziela diagnozę od przypuszczenia. Gdy zagrożone jest życie załogi, porzuca popisy i skupia się na sprawdzeniu najważniejszych danych.",
-        "conversation_style": "Mówi swobodnie, barwnie i lekko teatralnie, zwykle w dwóch do czterech zdań. Lubi obrazowe porównania, pytania retoryczne i żartobliwe uwagi o kaprysach maszyn, ale nie umieszcza ich w każdej odpowiedzi. Techniczne sprawy tłumaczy przystępnie; w sytuacji awaryjnej mówi krótko i bez żartów.",
-        "knowledge_and_limits": "Zna mechanikę swojego statku, diagnostykę instalacji pokładowych i podstawową obsługę systemów podtrzymywania życia. Dostęp do danych zależy od sprawnych czujników, łączności i posiadanych uprawnień. Nie potrafi zdalnie naprawić dowolnej maszyny, przełamać każdego zabezpieczenia ani poznać stanu obcej stacji bez pomiarów lub wiarygodnego raportu.",
-        "example_dialogue": "Gracz: Dlaczego mam ci zaufać? \nFeliks Iskra: Najlepiej nie na słowo. Pokażę ci odczyty i powiem, gdzie kończy się diagnoza, a zaczyna zgadywanie. Statek może być po przejściach, ale uczciwość jeszcze nie jest częścią zamienną.\n\nGracz: Spada ciśnienie w module. Co robimy? \nFeliks Iskra: Koniec żartów. Sprawdzę odczyty i najbliższą śluzę. Jeśli druga strona jest bezpieczna, możemy się tam wycofać."
-    }
-]
 
 
 class CharacterSelectWindow:
@@ -65,24 +40,105 @@ class CharacterSelectWindow:
             if data != "Anulowano wybór pliku.":
                 print(f"Błąd wczytywania: {data}")
 
+    def trigger_character_generation(self):
+        description = self.description_entry.get("1.0", tk.END).strip()
+        
+        # Jeśli pole jest puste lub wciąż ma tekst placeholdera, przerywamy
+        if not description or description == self.placeholder_text:
+            messagebox.showwarning("Błąd", "Najpierw wpisz opis nowej postaci w polu tekstowym!", parent=self.root)
+            return
+
+        try:
+            import os
+            from google import genai
+            from character_manager import save_character, load_characters
+            
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                messagebox.showerror("Błąd", "Brak klucza GEMINI_API_KEY w zmiennych środowiskowych.", parent=self.root)
+                return
+
+            client = genai.Client(api_key=api_key)
+            
+            # Informacja dla użytkownika (generowanie może chwilę potrwać)
+            messagebox.showinfo("Generowanie", "Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
+            
+            # 1. Wywołanie funkcji generującej (zwraca obiekt Character)[cite: 2]
+            new_character = generate_character(description, client)
+            
+            # 2. Zapisanie postaci do pliku JSON w folderze characters/[cite: 4]
+            saved_path = save_character(new_character)
+            print(f"✅ Zapisano nową postać do pliku: {saved_path}")
+
+            # 3. Czyszczenie pola tekstowego
+            self.description_entry.delete("1.0", tk.END)
+            self.description_entry.insert("1.0", self.placeholder_text)
+            self.description_entry.config(foreground="grey")
+
+            # 4. Odświeżenie kafelków w oknie menu, aby nowa postać pojawiła się wizualnie
+            self.refresh_character_tiles()
+
+            messagebox.showinfo("Sukces", f"Postać została pomyślnie wygenerowana i zapisana!\nMożesz ją teraz wybrać z listy.", parent=self.root) # lub info
+            
+        except Exception as e:
+            messagebox.showerror("Błąd generowania", f"Nie udało się wygenerować postaci:\n{e}", parent=self.root)
+
     def create_widgets(self):
         top_frame = ttk.Frame(self.root)
-        top_frame.pack(fill=tk.X, padx=20, pady=20)
+        top_frame.pack(fill=tk.X, padx=20, pady=15)
 
         header_label = ttk.Label(
             top_frame,
-            text="Wybierz postać do rozpoczęcia sesji roleplay",
-            font=("Arial", 16, "bold")
+            text="Wybierz postać lub wpisz opis i wygeneruj nową",
+            font=("Arial", 14, "bold")
         )
-        header_label.pack(side=tk.LEFT)
+        header_label.pack(side=tk.TOP, anchor="w", pady=(0, 10))
 
-        # Przycisk wczytywania w oknie wyboru postaci
+        # --- Panela górna z polem wielolinijkowym i przyciskami ---
+        input_container = ttk.Frame(top_frame)
+        input_container.pack(fill=tk.X, expand=True)
+
+        # 1. Wielolinijkowe pole tekstowe na opis nowej postaci (ScrolledText / Text)
+        self.description_entry = scrolledtext.ScrolledText(
+            input_container,
+            height=4,               # Wysokość odpowiadająca prawemu panelowi z przyciskami
+            font=("Arial", 10),
+            wrap=tk.WORD,
+            background="#ffffff"
+        )
+        self.description_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
+        # --- OBSŁUGA NAPISU FANTOMOWEGO (PLACEHOLDER) ---
+        self.placeholder_text = "Wpisz opis nowej postaci tutaj..."
+        
+        # Wstawiamy placeholder na start i ustawiamy szary kolor
+        self.description_entry.insert("1.0", self.placeholder_text)
+        self.description_entry.config(foreground="grey")
+
+        # Biny wykrywające kliknięcie (wejście) i opuszczenie pola
+        self.description_entry.bind("<FocusIn>", self._on_placeholder_focus_in)
+        self.description_entry.bind("<FocusOut>", self._on_placeholder_focus_out)
+
+        # 2. Ramka po prawej stronie na przyciski o jednakowej szerokości
+        btn_box = ttk.Frame(input_container)
+        btn_box.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_width = 18  # Jednakowa szerokość obu przycisków w znakach
+
+        gen_btn = ttk.Button(
+            btn_box, 
+            text="✨ Generuj", 
+            width=btn_width,
+            command=self.trigger_character_generation
+        )
+        gen_btn.pack(side=tk.TOP, fill=tk.X, pady=(0, 6))
+
         load_btn = ttk.Button(
-            top_frame,
+            btn_box,
             text="📁 Wczytaj grę",
+            width=btn_width,
             command=self.handle_load_game_from_menu
         )
-        load_btn.pack(side=tk.RIGHT)
+        load_btn.pack(side=tk.BOTTOM, fill=tk.X)
 
         # Kontener główny na scrollowalny obszar
         container = ttk.Frame(self.root)
@@ -106,12 +162,59 @@ class CharacterSelectWindow:
         self.canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.BOTTOM, fill=tk.X, pady=(10, 0))
 
-        # Generowanie kafelków dla każdej postaci
-        for char in CHARACTERS:
-            self.create_character_tile(char)
+        # Generowanie kafelków dla każdej postaci z folderu characters/
+        characters = load_characters()
+        if not characters:
+            empty_label = ttk.Label(
+                self.tiles_frame,
+                text="Brak postaci w folderze characters/.",
+                font=("Arial", 12),
+            )
+            empty_label.pack(padx=20, pady=40)
+            messagebox.showwarning(
+                "Brak postaci",
+                "Nie znaleziono poprawnych plików JSON w folderze characters/.",
+                parent=self.root,
+            )
+        else:
+            for char in characters:
+                self.create_character_tile(char)
 
         # Obsługa przewijania kółkiem myszy
         self.canvas.bind_all("<Shift-MouseWheel>", self._on_mouse_wheel)
+
+    def _on_placeholder_focus_in(self, event):
+        """Usuwa placeholder po kliknięciu w pole tekstowe."""
+        current_text = self.description_entry.get("1.0", tk.END).strip()
+        if current_text == self.placeholder_text:
+            self.description_entry.delete("1.0", tk.END)
+            self.description_entry.config(foreground="black")  # Przywracamy normalny czarny tekst
+
+    def _on_placeholder_focus_out(self, event):
+        """Przywraca placeholder, jeśli pole zostało puste po wyjściu."""
+        current_text = self.description_entry.get("1.0", tk.END).strip()
+        if not current_text:
+            self.description_entry.insert("1.0", self.placeholder_text)
+            self.description_entry.config(foreground="grey")
+
+    def refresh_character_tiles(self):
+        """Odświeża listę kafelków w oknie wyboru."""
+        # Usuwamy stare kafelki z ramki
+        for widget in self.tiles_frame.winfo_children():
+            widget.destroy()
+
+        # Wczytujemy postacie na nowo (w tym nowo dodaną)[cite: 4]
+        characters = load_characters()
+        if not characters:
+            empty_label = ttk.Label(
+                self.tiles_frame,
+                text="Brak postaci w folderze characters/.",
+                font=("Arial", 12),
+            )
+            empty_label.pack(padx=20, pady=40)
+        else:
+            for char in characters:
+                self.create_character_tile(char)
 
     def create_character_tile(self, char):
         """Tworzy pojedynczy kafelek dla postaci ze wszystkimi danymi z szablonu."""
