@@ -298,6 +298,12 @@ class RoleplayChatApp:
         load_btn = ttk.Button(action_bar, text="📂 Wczytaj grę", command=lambda: getattr(self, 'handle_load_in_game', lambda: None)())
         load_btn.pack(side=tk.LEFT)
 
+        self.back_btn = ttk.Button(
+            action_bar,
+            text="Powrót"
+        )
+        self.back_btn.pack(side=tk.RIGHT)
+
         # ------------------------------------------------------------------
         # 1. Historia konwersacji
         # ------------------------------------------------------------------

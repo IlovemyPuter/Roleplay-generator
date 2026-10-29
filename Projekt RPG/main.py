@@ -33,9 +33,15 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         # Inicjalizacja klasycznego okna z interfejsu
         super().__init__(root, character)
 
+        self.has_unsaved_changes = False
+
         # --- BINDOWANIE KLAWISZY ---
         root.bind("<F5>", lambda event: self.handle_save())
         root.bind("<F8>", lambda event: self.handle_load_in_game())
+
+        # Podpięcie akcji pod przycisk powrotu zdefiniowany w interfejsie
+        if hasattr(self, 'back_btn'):
+            self.back_btn.config(command=self.handle_back)
 
         if save_data:
             # TRYB WCZYTANIA: Odtwarzamy stan z pliku JSON
@@ -58,6 +64,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.character = data["character"]
             self.system_instruction = data["system_instruction"]
             self.clean_chat_history = data["chat_history"]
+            self.has_unsaved_changes = False
 
             # Czyścimy widok czatu i odtwarzamy sesję od nowa
             self.chat_display.config(state=tk.NORMAL)
@@ -119,10 +126,50 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         )
         
         if success:
+            self.has_unsaved_changes = False
             self.append_message("System", f"💾 Gra została pomyślnie zapisana do pliku: {result}", "system_tag")
         else:
             if result != "Anulowano zapis.":
                 self.append_message("System", f"❌ Błąd podczas zapisu gry: {result}", "system_tag")
+
+    def handle_back(self):
+        """Obsługa przycisku powrotu (tak jak handle_save czy handle_load_in_game)."""
+        # Sprawdzamy czy od ostatniego zapisu lub startu nie było żadnej akcji
+        if not self.has_unsaved_changes:
+            self.return_to_menu()
+        else:
+            # Jeśli były akcje, pytamy użytkownika co zrobić (pop-up)
+            from tkinter import messagebox
+            answer = messagebox.askyesnocancel(
+                "Niezapisana rozmowa",
+                "Masz niezapisane postępy w rozmowie. Czy chcesz zapisać grę przed powrotem?",
+                parent=self.root
+            )
+
+            if answer is True:  # Wybrano "Tak" -> zapisujemy i wracamy
+                success, result = save_game(
+                    character=self.character,
+                    system_instruction=self.system_instruction,
+                    chat_history=self.clean_chat_history,
+                    parent_window=self.root
+                )
+                if success:
+                    self.return_to_menu()
+                else:
+                    if result != "Anulowano zapis.":
+                        self.append_message("System", f"❌ Błąd zapisu: {result}", "system_tag")
+            elif answer is False:  # Wybrano "Nie" -> wracamy bez zapisu
+                self.return_to_menu()
+            else:
+                # Wybrano "Anuluj" -> nic nie robimy, zostajemy w grze
+                pass
+
+    def return_to_menu(self):
+        """Niszczy obecne okno i wraca do wyboru postaci."""
+        self.root.destroy()
+        select_root = tk.Tk()
+        CharacterSelectWindow(select_root, on_character_selected=start_chat_app_with_hybrid_gm)
+        select_root.mainloop()
 
     def init_gemini_chat(self):
         if not client:
@@ -304,6 +351,8 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
             f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu,"
             "komentując obecną sytuację, bez podawania gotowych propozycji dalszych kroków."
         )
+        self.has_unsaved_changes = True
+
         try:
             print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
             response_stream = self.gemini_chat.send_message_stream(intro_prompt)
@@ -321,6 +370,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 
         # Zapisujemy ruch gracza do czystej historii
         self.clean_chat_history.append({"sender": "Me", "text": prompt})
+        self.has_unsaved_changes = True
 
         try:
             print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
