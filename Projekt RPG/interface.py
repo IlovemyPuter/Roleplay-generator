@@ -42,6 +42,7 @@ class CharacterSelectWindow:
 
         self.create_widgets()
 
+        self.root.bind("<F8>", lambda event: self.handle_load_game_from_menu())
 
     def handle_load_game_from_menu(self):
         """Obsługa wczytywania gry z menu głównego."""
@@ -193,6 +194,12 @@ class RoleplayChatApp:
 
         load_btn = ttk.Button(action_bar, text="📂 Wczytaj grę", command=lambda: getattr(self, 'handle_load_in_game', lambda: None)())
         load_btn.pack(side=tk.LEFT)
+
+        self.back_btn = ttk.Button(
+            action_bar,
+            text="Powrót"
+        )
+        self.back_btn.pack(side=tk.RIGHT)
 
         # ------------------------------------------------------------------
         # 1. Historia konwersacji
