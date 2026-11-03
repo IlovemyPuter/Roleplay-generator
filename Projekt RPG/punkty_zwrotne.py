@@ -1,3 +1,8 @@
+from pydantic import ValidationError
+
+from plot_outline import TurningPoint
+
+
 def stworz_zadanie_fabularne(id_p, tytul, opis, typ_w, wartosc_w, skutek):
     return {
         "id": id_p,
@@ -9,27 +14,13 @@ def stworz_zadanie_fabularne(id_p, tytul, opis, typ_w, wartosc_w, skutek):
     }
 
 def zweryfikuj_wpis(punkt):
-    wymagane = ["id", "tytul", "opis", "warunek", "skutek", "stan"]
     if not isinstance(punkt, dict):
         return False
-    if not all(k in punkt for k in wymagane):
+    try:
+        TurningPoint.model_validate(punkt)
+    except ValidationError:
         return False
-    if not isinstance(punkt["id"], int) or isinstance(punkt["id"], bool):
-        return False
-    if not (1 <= punkt["id"] <= 5):
-        return False
-    if punkt["stan"] not in ["oczekujacy", "wykonany"]:
-        return False
-    
-    war = punkt["warunek"]
-    if not isinstance(war, dict) or "typ" not in war or "wartosc" not in war:
-        return False
-    if war["typ"] not in ["rzut", "tura"]:
-        return False
-    if not isinstance(war["wartosc"], int) or isinstance(war["wartosc"], bool):
-        return False
-        
-    return True 
+    return True
 
 def sprawdz_warunek(punkt, stan_gry):
     if punkt.get("stan") != "oczekujacy":
