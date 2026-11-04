@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 from character import Character
 from plot_outline import PlotOutline, validate_plot_response
-from punkty_zwrotne import stworz_zadanie_fabularne
 
 
 SYSTEM_INSTRUCTION_PATH = (
@@ -27,8 +26,8 @@ def generate_plot(
     *,
     model: str | None = None,
     client: genai.Client | None = None,
-) -> list[dict[str, Any]]:
-    """Zwraca pięć punktów jako słowniki"""
+) -> PlotOutline:
+    """Zwraca zweryfikowany zarys z pięcioma oczekującymi punktami zwrotnymi."""
     if not isinstance(setting, str) or not setting.strip():
         raise ValueError("Setting nie może być pusty.")
     if model is None:
@@ -75,14 +74,9 @@ def generate_plot(
             response_text = response.text or ""
             try:
                 outline = validate_plot_response(response_text)
-                
-                return [
-                    stworz_zadanie_fabularne(
-                        point.id, point.title, point.description,
-                        point.condition.type, point.condition.value, point.effect,
-                    )
-                    for point in outline.root
-                ]
+                for point in outline.root:
+                    point.status = "oczekujacy"
+                return outline
             except ValidationError as error:
                 last_error = error
                 feedback = [
