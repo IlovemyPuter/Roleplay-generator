@@ -1,33 +1,8 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import Field, RootModel, model_validator
 
-
-PlotText = Annotated[str, Field(min_length=1)]
-
-
-class Condition(BaseModel):
-    """Model warunku wykonania punktu fabularnego"""
-
-    model_config = ConfigDict(extra="forbid", strict=True, serialize_by_alias=True)
-
-    type: Literal["rzut", "tura"] = Field(alias="typ")
-    value: int = Field(alias="wartosc")
-
-
-class TurningPoint(BaseModel):
-    """Model punktu fabularnego"""
-
-    model_config = ConfigDict(
-        extra="forbid", strict=True, str_strip_whitespace=True, serialize_by_alias=True
-    )
-
-    id: Annotated[int, Field(ge=1, le=5)]
-    title: PlotText = Field(alias="tytul")
-    description: PlotText = Field(alias="opis")
-    condition: Condition = Field(alias="warunek")
-    effect: PlotText = Field(alias="skutek")
-    status: Literal["oczekujacy", "wykonany"] = Field(alias="stan")
+from turning_point import TurningPoint
 
 
 class PlotOutline(RootModel[list[TurningPoint]]):
