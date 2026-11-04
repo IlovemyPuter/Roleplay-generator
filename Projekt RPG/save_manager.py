@@ -1,10 +1,8 @@
 import os
 import json
 from tkinter import filedialog
-from pathlib import Path
 
-# Nazwa folderu na zapisy
-SAVE_DIR = Path(__file__).resolve().parent / "savegame"
+from config import SAVE_DIR
 
 def ensure_save_dir():
     """Tworzy folder savegame, jeśli jeszcze nie istnieje."""

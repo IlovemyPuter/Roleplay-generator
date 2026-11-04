@@ -1,9 +1,5 @@
-"""Generowanie pięciu punktów zwrotnych przez Gemini."""
-
 from contextlib import nullcontext
 import json
-import os
-from pathlib import Path
 from typing import Any
 
 from google import genai
@@ -11,13 +7,13 @@ from google.genai import types
 from pydantic import ValidationError
 
 from character import Character
-from plot_outline import PlotOutline, validate_plot_response
-
-
-SYSTEM_INSTRUCTION_PATH = (
-    Path(__file__).resolve().parent / "prompts" / "generate-plot.system.md"
+from config import (
+    PLOT_GENERATION_MAX_ATTEMPTS,
+    PLOT_REQUEST_TIMEOUT_MS,
+    PLOT_SYSTEM_INSTRUCTION_PATH,
+    load_config,
 )
-MAX_ATTEMPTS = 3
+from plot_outline import PlotOutline, validate_plot_response
 
 
 def generate_plot(
@@ -30,8 +26,9 @@ def generate_plot(
     """Zwraca zweryfikowany zarys z pięcioma oczekującymi punktami zwrotnymi."""
     if not isinstance(setting, str) or not setting.strip():
         raise ValueError("Setting nie może być pusty.")
+    settings = load_config()
     if model is None:
-        model = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+        model = settings.model
     if not isinstance(model, str) or not model.strip():
         raise ValueError("Nazwa modelu nie może być pusta.")
     if not isinstance(characters, list) or not characters:
@@ -52,22 +49,28 @@ def generate_plot(
         raise ValueError("Dane postaci muszą być zapisane w poprawnym formacie JSON.") from error
 
     config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8"),
+        system_instruction=PLOT_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8"),
         response_mime_type="application/json",
         response_json_schema=PlotOutline.model_json_schema(),
     )
 
+    if client is None and not settings.api_key:
+        raise ValueError("Brak klucza GEMINI_API_KEY w konfiguracji.")
+
     client_context = (
         nullcontext(client)
         if client is not None
-        else genai.Client(http_options=types.HttpOptions(timeout=60_000))
+        else genai.Client(
+            api_key=settings.api_key,
+            http_options=types.HttpOptions(timeout=PLOT_REQUEST_TIMEOUT_MS),
+        )
     )
 
     last_error = None
     error_summary = ""
 
     with client_context as api_client:
-        for _ in range(MAX_ATTEMPTS):
+        for _ in range(PLOT_GENERATION_MAX_ATTEMPTS):
             response = api_client.models.generate_content(
                 model=model, contents=contents, config=config
             )
@@ -94,6 +97,6 @@ def generate_plot(
                 contents = json.dumps(request, ensure_ascii=False, allow_nan=False)
 
     raise Exception(
-        f"Brak poprawnego zarysu fabuły po {MAX_ATTEMPTS} próbach. "
+        f"Brak poprawnego zarysu fabuły po {PLOT_GENERATION_MAX_ATTEMPTS} próbach. "
         f"Ostatnie błędy: {error_summary}"
     ) from last_error

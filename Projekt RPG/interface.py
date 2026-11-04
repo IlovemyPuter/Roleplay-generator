@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from character_manager import load_characters
+from config import load_config
 from generate_character import generate_character
 from save_manager import load_game
 
@@ -49,22 +50,21 @@ class CharacterSelectWindow:
             return
 
         try:
-            import os
             from google import genai
             from character_manager import save_character, load_characters
             
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
+            settings = load_config()
+            if not settings.api_key:
                 messagebox.showerror("Błąd", "Brak klucza GEMINI_API_KEY w zmiennych środowiskowych.", parent=self.root)
                 return
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=settings.api_key)
             
             # Informacja dla użytkownika (generowanie może chwilę potrwać)
             messagebox.showinfo("Generowanie", "Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
             
             # 1. Wywołanie funkcji generującej (zwraca obiekt Character)[cite: 2]
-            new_character = generate_character(description, client)
+            new_character = generate_character(description, client, model=settings.model)
             
             # 2. Zapisanie postaci do pliku JSON w folderze characters/[cite: 4]
             saved_path = save_character(new_character)
