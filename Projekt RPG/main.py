@@ -1,5 +1,4 @@
-import os
-from dotenv import load_dotenv
+from config import CHAT_TEMPERATURE, load_config
 
 from google import genai
 from google.genai import types
@@ -13,18 +12,15 @@ from interface import CharacterSelectWindow, RoleplayChatApp
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
-# .env leży w katalogu głównym repozytorium, jeden poziom nad tym plikiem.
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+settings = load_config()
+model = settings.model
 
-api_key = os.getenv("GEMINI_API_KEY")
-model = os.getenv("GEMINI_MODEL")
-
-# Inicjalizacja klienta
-try:
-    client = genai.Client(api_key=api_key)
-except Exception as e:
-    print(f"Błąd inicjalizacji klienta Gemini: {e}")
-    client = None
+client = None
+if settings.api_key:
+    try:
+        client = genai.Client(api_key=settings.api_key)
+    except Exception as e:
+        print(f"Błąd inicjalizacji klienta Gemini: {e}")
 
 class HybridGMRoleplayChatApp(RoleplayChatApp):
     """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
@@ -107,7 +103,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
-                    temperature=0.8,
+                    temperature=CHAT_TEMPERATURE,
                 ),
                 history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
             )
@@ -223,7 +219,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
                 model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
-                    temperature=0.8, # Wyższa temperatura = bardziej kreatywne opisy
+                    temperature=CHAT_TEMPERATURE, # Wyższa temperatura = bardziej kreatywne opisy
                 )
             )
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
