@@ -9,6 +9,10 @@ import tkinter as tk
 # Importujemy dane postaci i klasy okien z pliku interface.py
 from interface import CharacterSelectWindow, RoleplayChatApp
 
+# Import modelu TurningPoint:
+from turning_point import TurningPoint
+from generate_plot import generate_plot
+
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
@@ -44,13 +48,41 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.character = save_data["character"]
             self.system_instruction = save_data["system_instruction"]
             self.clean_chat_history = save_data["chat_history"]
+
+            # Odtwarzanie punktów zwrotnych i stanu gry ze zrzutu
+            raw_tps = save_data.get("turning_points", [])
+            self.turning_points = [TurningPoint.model_validate(tp) if isinstance(tp, dict) else tp for tp in raw_tps]
+            self.game_state = save_data.get("game_state", {"tura": 0, "ostatni_rzut": None})
             
             self.root.after(100, self.restore_loaded_session)
         else:
             # TRYB NOWEJ GRY
             self.clean_chat_history = []
             self.system_instruction = ""
+            self.game_state = {"tura": 1, "ostatni_rzut": None}
+            self.has_unsaved_changes = False
             self.root.after(100, self.init_gemini_chat)
+
+    def update_turning_points_ui(self):
+        """Odświeża tabelę punktów zwrotnych oraz etykietę stanu gry w panelu."""
+        if hasattr(self, 'state_label') and self.state_label:
+            tura = self.game_state.get("tura", 0)
+            rzut = self.game_state.get("ostatni_rzut")
+            rzut_str = str(rzut) if rzut is not None else "brak"
+            self.state_label.config(text=f"Stan gry: Tura {tura} | Ostatni rzut: {rzut_str}")
+
+        if hasattr(self, 'points_tree') and self.points_tree:
+            for row in self.points_tree.get_children():
+                self.points_tree.delete(row)
+            for tp in self.turning_points:
+                status_text = "Oczekujący" if tp.status == "oczekujacy" else "Wykonany"
+                tag = "oczekujacy" if tp.status == "oczekujacy" else "wykonany"
+                self.points_tree.insert(
+                    "",
+                    tk.END,
+                    values=(tp.id, tp.title, tp.description, status_text),
+                    tags=(tag,)
+                )
 
     def handle_load_in_game(self):
         """Obsługa wczytywania gry z poziomu aktywnego czatu (przycisk lub F8)."""
@@ -77,14 +109,13 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         if not client:
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
             return
-
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
             sender = msg["sender"]
             text = msg["text"]
             tag = "bot_tag" if sender == "Mistrz Gry & Świat" else "user_tag"
             self.append_message(sender, text, tag)
-
+            
         # 2. Przygotowujemy historię dla struktury SDK Gemini
         # Konwertujemy historię do formatu typów wiadomości Gemini (user / model)
         gemini_history = []
@@ -107,6 +138,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 ),
                 history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
             )
+            self.update_turning_points_ui()
             self.append_message("System", "📂 Stan gry został pomyślnie wczytany! Możesz kontynuować przygodę.", "system_tag")
         except Exception as e:
             self.handle_gemini_error(e)
@@ -118,6 +150,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             character=self.character,
             system_instruction=self.system_instruction,
             chat_history=self.clean_chat_history,
+            turning_points=self.turning_points,
+            game_state=self.game_state,
             parent_window=self.root
         )
         
@@ -174,6 +208,20 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             return
 
         print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
+
+        # Generowanie 5 punktów zwrotnych na początku nowej przygody
+        try:
+            setting = self.character['role_and_background']
+            plot_outline = generate_plot(setting=setting, characters=[self.character], model=model, client=client)
+            self.turning_points = plot_outline.root
+            self.game_state = {"tura": 1, "ostatni_rzut": None}
+            self.update_turning_points_ui()
+            print("✅ [API] Wygenerowano 5 punktów zwrotnych.")
+        except Exception as e:
+            print(f"⚠️ [API] Błąd generowania punktów zwrotnych: {e}")
+            self.turning_points = []
+            self.game_state = {"tura": 1, "ostatni_rzut": None}
+            self.update_turning_points_ui()
 
         # Osobowość i zasady dla AI (System Instruction)
         char = self.character
