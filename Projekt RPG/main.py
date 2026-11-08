@@ -109,13 +109,15 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         if not client:
             self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
             return
-
+        # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
             sender = msg["sender"]
             text = msg["text"]
             tag = "bot_tag" if sender == "Mistrz Gry & Świat" else "user_tag"
             self.append_message(sender, text, tag)
-
+            
+        # 2. Przygotowujemy historię dla struktury SDK Gemini
+        # Konwertujemy historię do formatu typów wiadomości Gemini (user / model)
         gemini_history = []
         for msg in self.clean_chat_history:
             role = "user" if msg["sender"] == "Me" else "model"
@@ -126,6 +128,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 )
             )
 
+        # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
         try:
             self.gemini_chat = client.chats.create(
                 model=model,
@@ -133,7 +136,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                     system_instruction=self.system_instruction,
                     temperature=CHAT_TEMPERATURE,
                 ),
-                history=gemini_history
+                history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
             )
             self.update_turning_points_ui()
             self.append_message("System", "📂 Stan gry został pomyślnie wczytany! Możesz kontynuować przygodę.", "system_tag")
