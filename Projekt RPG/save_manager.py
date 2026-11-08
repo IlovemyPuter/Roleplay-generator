@@ -15,7 +15,7 @@ def save_game(character, system_instruction, chat_history, turning_points=None, 
     
     file_path = filedialog.asksaveasfilename(
         parent=parent_window,
-        initialdir=SAVE_DIR,
+        initialdir=SAVE_DIR,  # Otwiera okno dialogowe bezpośrednio w folderze savegame
         defaultextension=".json",
         filetypes=[("Pliki JSON (*.json)", "*.json"), ("Wszystkie pliki", "*.*")],
         title="Zapisz stan gry"
@@ -49,6 +49,7 @@ def save_game(character, system_instruction, chat_history, turning_points=None, 
 
 def load_game(parent_window=None):
     ensure_save_dir()
+    """Wczytuje stan gry z pliku JSON i zwraca słownik z danymi."""
     file_path = filedialog.askopenfilename(
         parent=parent_window,
         initialdir=SAVE_DIR,
@@ -61,7 +62,8 @@ def load_game(parent_window=None):
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+            
+        # Sprawdzamy czy plik posiada wymagane klucze
         required_keys = ["character", "system_instruction", "chat_history"]
         if not all(key in data for key in required_keys):
             return False, "Nieprawidłowy format pliku zapisu."
