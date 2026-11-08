@@ -9,14 +9,13 @@ def ensure_save_dir():
     if not os.path.exists(SAVE_DIR):
         os.makedirs(SAVE_DIR)
 
-def save_game(character, system_instruction, chat_history, parent_window=None):
-    """Zapisuje stan gry do pliku JSON w folderze savegame."""
+def save_game(character, system_instruction, chat_history, turning_points=None, game_state=None, parent_window=None):
+    """Zapisuje postać, instrukcję systemową, historię czatu oraz punkty zwrotne do pliku JSON."""
     ensure_save_dir()
     
-    """Zapisuje postać, setting oraz historię czatu do pliku JSON."""
     file_path = filedialog.asksaveasfilename(
         parent=parent_window,
-        initialdir=SAVE_DIR,  # Otwiera okno dialogowe bezpośrednio w folderze savegame
+        initialdir=SAVE_DIR,
         defaultextension=".json",
         filetypes=[("Pliki JSON (*.json)", "*.json"), ("Wszystkie pliki", "*.*")],
         title="Zapisz stan gry"
@@ -25,10 +24,20 @@ def save_game(character, system_instruction, chat_history, parent_window=None):
     if not file_path:
         return False, "Anulowano zapis."
 
+    tp_data = []
+    if turning_points:
+        for tp in turning_points:
+            if hasattr(tp, "model_dump"):
+                tp_data.append(tp.model_dump())
+            elif isinstance(tp, dict):
+                tp_data.append(tp)
+
     save_data = {
         "character": character,
         "system_instruction": system_instruction,
-        "chat_history": chat_history
+        "chat_history": chat_history,
+        "turning_points": tp_data,
+        "game_state": game_state if game_state is not None else {"tura": 0, "ostatni_rzut": None}
     }
 
     try:
@@ -40,7 +49,6 @@ def save_game(character, system_instruction, chat_history, parent_window=None):
 
 def load_game(parent_window=None):
     ensure_save_dir()
-    """Wczytuje stan gry z pliku JSON i zwraca słownik z danymi."""
     file_path = filedialog.askopenfilename(
         parent=parent_window,
         initialdir=SAVE_DIR,
@@ -54,7 +62,6 @@ def load_game(parent_window=None):
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
-        # Sprawdzamy czy plik posiada wymagane klucze
         required_keys = ["character", "system_instruction", "chat_history"]
         if not all(key in data for key in required_keys):
             return False, "Nieprawidłowy format pliku zapisu."
