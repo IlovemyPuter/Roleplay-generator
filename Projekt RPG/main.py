@@ -12,6 +12,7 @@ from interface import CharacterSelectWindow, RoleplayChatApp
 
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
+from punkty_zwrotne import obsluz_ture, stan_gry, lista_punktow
 
 # .env leży w katalogu głównym repozytorium, jeden poziom nad tym plikiem.
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
@@ -367,6 +368,12 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         if not self.gemini_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
             return
+
+        skutki = obsluz_ture(stan_gry, lista_punktow)
+        if skutki:
+            prompt += "\n" + "\n".join(
+                f"[Punkt zwrotny] {skutek}" for skutek in skutki
+            )
 
         # Zapisujemy ruch gracza do czystej historii
         self.clean_chat_history.append({"sender": "Me", "text": prompt})
