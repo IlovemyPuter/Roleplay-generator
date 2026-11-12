@@ -1,8 +1,10 @@
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
 from character_manager import load_characters
+from config import load_config
 from generate_character import generate_character
 from save_manager import load_game
+from turning_point import TurningPoint, is_ready
 
 
 class CharacterSelectWindow:
@@ -11,8 +13,8 @@ class CharacterSelectWindow:
     def __init__(self, root, on_character_selected):
         self.root = root
         self.root.title("Wybierz postać do roli")
-        self.root.geometry("850x550")
-        self.root.minsize(600, 400)
+        self.root.geometry("1000x650")
+        self.root.minsize(600, 480)
         self.on_character_selected = on_character_selected
 
         self.create_widgets()
@@ -22,11 +24,11 @@ class CharacterSelectWindow:
     def handle_load_game_from_menu(self):
         """Obsługa wczytywania gry z menu głównego."""
         success, data = load_game(parent_window=self.root)
-        
+
         if success:
             # Importujemy klasę tutaj, co eliminuje błąd cyklicznego importu
             from main import HybridGMRoleplayChatApp
-            
+
             # 1. Ukrywamy lub niszczymy okno menu głównego
             self.root.destroy()
             # 2. Tworzymy nowe okno dla gry
@@ -34,7 +36,7 @@ class CharacterSelectWindow:
             # 3. Uruchamiamy aplikację czatu, przekazując wczytane dane z pliku JSON
             # (Przekazujemy character z data["character"] oraz całe data do argumentu save_data)
             app = HybridGMRoleplayChatApp(game_window, character=data["character"], save_data=data)
-            
+
             game_window.mainloop()
         else:
             if data != "Anulowano wybór pliku.":
@@ -42,30 +44,29 @@ class CharacterSelectWindow:
 
     def trigger_character_generation(self):
         description = self.description_entry.get("1.0", tk.END).strip()
-        
+
         # Jeśli pole jest puste lub wciąż ma tekst placeholdera, przerywamy
         if not description or description == self.placeholder_text:
             messagebox.showwarning("Błąd", "Najpierw wpisz opis nowej postaci w polu tekstowym!", parent=self.root)
             return
 
         try:
-            import os
             from google import genai
             from character_manager import save_character, load_characters
-            
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
+
+            settings = load_config()
+            if not settings.api_key:
                 messagebox.showerror("Błąd", "Brak klucza GEMINI_API_KEY w zmiennych środowiskowych.", parent=self.root)
                 return
 
-            client = genai.Client(api_key=api_key)
-            
+            client = genai.Client(api_key=settings.api_key)
+
             # Informacja dla użytkownika (generowanie może chwilę potrwać)
-            messagebox.showinfo("Generowanie", "Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
-            
+            messagebox.showinfo("Generowanie","Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
+
             # 1. Wywołanie funkcji generującej (zwraca obiekt Character)[cite: 2]
-            new_character = generate_character(description, client)
-            
+            new_character = generate_character(description, client, model=settings.model)
+
             # 2. Zapisanie postaci do pliku JSON w folderze characters/[cite: 4]
             saved_path = save_character(new_character)
             print(f"✅ Zapisano nową postać do pliku: {saved_path}")
@@ -78,8 +79,8 @@ class CharacterSelectWindow:
             # 4. Odświeżenie kafelków w oknie menu, aby nowa postać pojawiła się wizualnie
             self.refresh_character_tiles()
 
-            messagebox.showinfo("Sukces", f"Postać została pomyślnie wygenerowana i zapisana!\nMożesz ją teraz wybrać z listy.", parent=self.root) # lub info
-            
+            messagebox.showinfo("Sukces",f"Postać została pomyślnie wygenerowana i zapisana!\nMożesz ją teraz wybrać z listy.", parent=self.root)  # lub info
+
         except Exception as e:
             messagebox.showerror("Błąd generowania", f"Nie udało się wygenerować postaci:\n{e}", parent=self.root)
 
@@ -101,7 +102,7 @@ class CharacterSelectWindow:
         # 1. Wielolinijkowe pole tekstowe na opis nowej postaci (ScrolledText / Text)
         self.description_entry = scrolledtext.ScrolledText(
             input_container,
-            height=4,               # Wysokość odpowiadająca prawemu panelowi z przyciskami
+            height=4,  # Wysokość odpowiadająca prawemu panelowi z przyciskami
             font=("Arial", 10),
             wrap=tk.WORD,
             background="#ffffff"
@@ -109,7 +110,7 @@ class CharacterSelectWindow:
         self.description_entry.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 15))
         # --- OBSŁUGA NAPISU FANTOMOWEGO (PLACEHOLDER) ---
         self.placeholder_text = "Wpisz opis nowej postaci tutaj..."
-        
+
         # Wstawiamy placeholder na start i ustawiamy szary kolor
         self.description_entry.insert("1.0", self.placeholder_text)
         self.description_entry.config(foreground="grey")
@@ -125,8 +126,8 @@ class CharacterSelectWindow:
         btn_width = 18  # Jednakowa szerokość obu przycisków w znakach
 
         gen_btn = ttk.Button(
-            btn_box, 
-            text="✨ Generuj", 
+            btn_box,
+            text="✨ Generuj",
             width=btn_width,
             command=self.trigger_character_generation
         )
@@ -274,8 +275,12 @@ class RoleplayChatApp:
         self.root = root
         self.character = character
         self.root.title(f"LLM Roleplay - Rozmawiasz z: {character['name']}")
-        self.root.geometry("650x650")
-        self.root.minsize(450, 450)
+        self.root.geometry("1000x650")
+        self.root.minsize(800, 450)
+
+        # Stan potrzebny do oceny warunków punktów zwrotnych (patrz turning_point.is_ready)
+        self.turning_points: list[TurningPoint] = []
+        self.game_state: dict[str, int | None] = {"tura": 0, "ostatni_rzut": None}
 
         self.style = ttk.Style()
         self.style.theme_use('clam')
@@ -284,18 +289,23 @@ class RoleplayChatApp:
         self.send_system_greeting()
 
     def create_widgets(self):
+        # Panel punktów zwrotnych pakujemy jako pierwszy (prawa strona okna)
+        self.create_turning_points_panel()
+
         main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         # ------------------------------------------------------------------
         # 0. Pasek przycisków akcji nad czatem (Zapisz / Wczytaj)
         # ------------------------------------------------------------------
         action_bar = ttk.Frame(main_frame)
         action_bar.pack(fill=tk.X, pady=(0, 5))
 
-        save_btn = ttk.Button(action_bar, text="💾 Zapisz grę", command=lambda: getattr(self, 'handle_save', lambda: None)())
+        save_btn = ttk.Button(action_bar, text="💾 Zapisz grę",
+                              command=lambda: getattr(self, 'handle_save', lambda: None)())
         save_btn.pack(side=tk.LEFT, padx=(0, 5))
 
-        load_btn = ttk.Button(action_bar, text="📂 Wczytaj grę", command=lambda: getattr(self, 'handle_load_in_game', lambda: None)())
+        load_btn = ttk.Button(action_bar, text="📂 Wczytaj grę",
+                              command=lambda: getattr(self, 'handle_load_in_game', lambda: None)())
         load_btn.pack(side=tk.LEFT)
 
         self.back_btn = ttk.Button(
@@ -335,6 +345,9 @@ class RoleplayChatApp:
         self.msg_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.msg_entry.focus()
         self.msg_entry.bind("<Return>", lambda event: self.send_message())
+
+        self.roll_button = ttk.Button(input_frame, text="🎲 Rzut k20")
+        self.roll_button.pack(side=tk.RIGHT, padx=(0, 5))
 
         send_button = ttk.Button(input_frame, text="Wyślij", command=self.send_message)
         send_button.pack(side=tk.RIGHT)
@@ -389,3 +402,34 @@ class RoleplayChatApp:
         self.chat_display.insert(tk.END, "\n\n")
         self.chat_display.config(state=tk.DISABLED)
         self.chat_display.see(tk.END)
+
+    # ------------------------------------------------------------------
+    # Panel punktów zwrotnych i rzut kością
+    # ------------------------------------------------------------------
+    def create_turning_points_panel(self):
+        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych."""
+        panel = ttk.LabelFrame(self.root, text=" Punkty zwrotne ", padding=8)
+        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+
+        self.state_label = ttk.Label(panel, font=("Arial", 10, "bold"))
+        self.state_label.pack(anchor="w", pady=(0, 6))
+
+        self.points_tree = ttk.Treeview(
+            panel,
+            columns=("id", "title", "description", "status"),
+            show="headings",
+            height=5,
+            selectmode="none",
+        )
+        self.points_tree.heading("id", text="#")
+        self.points_tree.heading("title", text="Tytuł")
+        self.points_tree.heading("description", text="Opis")
+        self.points_tree.heading("status", text="Stan")
+        self.points_tree.column("id", width=30, anchor="center", stretch=False)
+        self.points_tree.column("title", width=170, anchor="w")
+        self.points_tree.column("description", width=80, anchor="center", stretch=False)
+        self.points_tree.column("status", width=110, anchor="w", stretch=False)
+        self.points_tree.pack(fill=tk.BOTH, expand=True)
+
+        self.points_tree.tag_configure("oczekujacy", foreground="#198754")
+        self.points_tree.tag_configure("wykonany", foreground="#6c757d")

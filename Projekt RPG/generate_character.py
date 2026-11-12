@@ -1,15 +1,14 @@
 import json
-import os
 
 from google import genai
 from google.genai import types
 from pydantic import ValidationError
 
 from character import Character, validate_character_response
-
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
-SYSTEM_INSTRUCTION_PATH = os.path.join(
-    os.path.dirname(__file__), "prompts", "generate-character.system.md"
+from config import (
+    CHARACTER_GENERATION_MAX_ATTEMPTS,
+    CHARACTER_SYSTEM_INSTRUCTION_PATH,
+    load_config,
 )
 
 
@@ -17,16 +16,19 @@ def generate_character(
     description: str,
     client: genai.Client,
     *,
-    model: str | None = DEFAULT_MODEL,
-    max_attempts: int = 2,
+    model: str | None = None,
+    max_attempts: int = CHARACTER_GENERATION_MAX_ATTEMPTS,
 ) -> Character:
     """Generuje i waliduje postać na podstawie opisu gracza."""
     description = description.strip()
     if not description:
         raise ValueError("Opis postaci nie może być pusty.")
+    if model is None:
+        model = load_config().model
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("Nazwa modelu nie może być pusta.")
 
-    with open(SYSTEM_INSTRUCTION_PATH, encoding="utf-8") as instruction_file:
-        system_instruction = instruction_file.read()
+    system_instruction = CHARACTER_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
 
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,

@@ -7,8 +7,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from character import Character
-
-CHARACTERS_DIR = Path(__file__).resolve().parent / "characters"
+from config import CHARACTERS_DIR
 
 
 def ensure_characters_dir() -> Path:

@@ -105,4 +105,7 @@ tempCodeRunnerFile.py
 .ruff_cache/
 
 savegame/
-Projekt RPG/characters/Julian_Kamiński.json
+/Projekt RPG/characters/*
+!/Projekt RPG/characters/Adela_Kruk.json
+!/Projekt RPG/characters/Feliks_Iskra.json
+!/Projekt RPG/characters/Jagoda_Żuraw.json

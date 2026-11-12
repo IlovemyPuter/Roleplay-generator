@@ -1,0 +1,22 @@
+from turning_point import (
+    TurningPoint,
+    get_pending_turning_points,
+    is_ready,
+    mark_executed,
+)
+
+
+def process_turn(
+    game_state: dict[str, int | None],
+    turning_points: list[TurningPoint],
+) -> list[str]:
+    game_state["tura"] += 1
+    effects = []
+
+    for point in get_pending_turning_points(turning_points):
+        if is_ready(point, game_state):
+            mark_executed(point)
+            effects.append(point.effect)
+
+    game_state["ostatni_rzut"] = None
+    return effects
