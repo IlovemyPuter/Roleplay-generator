@@ -134,7 +134,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             tura = self.game_state.get("tura", 0)
             rzut = self.game_state.get("ostatni_rzut")
             rzut_str = str(rzut) if rzut is not None else "brak"
-            self.state_label.config(text=f"Stan gry: Tura {tura} | Ostatni rzut: {rzut_str}")
+            etap = self.game_state.get("etap", "Etap 1")
+            self.state_label.config(text=f"{etap} | Tura {tura} | Ostatni rzut: {rzut_str}")
 
         if hasattr(self, 'points_container') and self.points_container:
             # Czyszczenie starych kart
