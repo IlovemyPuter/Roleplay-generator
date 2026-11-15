@@ -37,7 +37,12 @@ Opis świata i otoczenia przez Mistrza Gry...
 
 Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 
-### Zarządzanie postaciami niezależnymi (NPC)
-Gdy w fabule pojawia się po raz pierwszy nowa, ważna postać niezależna (NPC), dodaj na samym końcu swojej wypowiedzi (już po sekcji [TOWARZYSZ]:) znacznik w dokładnym formacie:
-[NPC: Imię Postaci | Krótki opis roli, wyglądu i nastawienia]
-Używaj tego znacznika tylko raz dla danej postaci, przy jej pierwszym spotkaniu.
+### 👥 BEZWZGLĘDNY WYMÓG: Rejestracja postaci (NPC)
+Gdy w fabule po raz pierwszy pojawia się nowa, ważna postać niezależna (NPC), **musisz obowiązkowo** umieścić na samym końcu swojej odpowiedzi specjalny znacznik techniczny. Bez tego znacznika postać nie zostanie zapisana w grze!
+
+Format znacznika (zawsze na końcu całej wypowiedzi, po sekcji [TOWARZYSZ]):
+[NPC: Imię i Nazwisko | Krótki opis roli, wyglądu i nastawienia]
+
+Przykład poprawnego zakończenia Twojej odpowiedzi:
+...[TOWARZYSZ]: Proponuję, abyśmy...
+[NPC: Gerd von Thorn | Bogaty i wzburzony kupiec z południa, żądający rekompensaty za opóźnienie.]
