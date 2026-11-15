@@ -121,6 +121,14 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.root.after(100, self.init_gemini_chat)
 
     def update_turning_points_ui(self):
+        
+        # Dynamiczne włączanie/wyłączanie przycisku rzutu w zależności od punktów zwrotnych
+        if hasattr(self, 'roll_button') and self.roll_button:
+            if self.is_roll_allowed() and not self.game_state.get("rzut_wykonany", False):
+                self.roll_button.config(state=tk.NORMAL)
+            else:
+                self.roll_button.config(state=tk.DISABLED)
+        
         """Odświeża listę punktów zwrotnych oraz etykietę stanu gry w panelu."""
         if hasattr(self, 'state_label') and self.state_label:
             tura = self.game_state.get("tura", 0)
@@ -407,19 +415,51 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.chat_display.config(state=tk.DISABLED)
 
     def handle_roll(self):
-        """Rzut k20: pozwala na wykonanie tylko jednego rzutu w danej turze."""
-        if self.game_state.get("rzut_wykonany", False):
-            self.append_message("System", "⚠️ W tej turze wykonano już rzut kością. Wyślij wiadomość do Mistrza Gry, aby przejść do następnej tury.", "error_tag")
+        """Rzut k20: dozwolony tylko wtedy, gdy punkt zwrotny tego wymaga i tylko raz na turę."""
+        # 1. Sprawdzamy, czy fabularnie potrzebny jest rzut
+        if not self.is_roll_allowed():
+            self.append_message(
+                "System", 
+                "⚠️ Obecna sytuacja nie wymaga rzutu kością. Rzucić kością można tylko wtedy, gdy wymaga tego bieżący punkt zwrotny.", 
+                "error_tag"
+            )
             return
 
-        # Wykonanie rzutu i zabezpieczenie przed ponownym kliknięciem w tej samej turze
+        # 2. Sprawdzamy blokadę jednorazowego rzutu w turze
+        if self.game_state.get("rzut_wykonany", False):
+            self.append_message(
+                "System", 
+                "⚠️ W tej turze wykonano już rzut kością. Wyślij wiadomość do Mistrza Gry, aby przejść do następnej tury.", 
+                "error_tag"
+            )
+            return
+
+        # Wykonanie rzutu
         self.game_state["ostatni_rzut"] = random.randint(1, 20)
         self.game_state["rzut_wykonany"] = True  
         self.has_unsaved_changes = True
         
         # Informacja o wyniku w czacie oraz odświeżenie panelu
-        self.append_message("System", f"🎲 Wykonano rzut kością k20. Wynik: **{self.game_state['ostatni_rzut']}**", "system_tag")
+        self.append_message("System", f"🎲 Wykonano rzut kością k20 na polecenie fabuły. Wynik: **{self.game_state['ostatni_rzut']}**", "system_tag")
         self.update_turning_points_ui()
+        
+    def is_roll_allowed(self) -> bool:
+        """Sprawdza, czy aktualny etap fabuły (oczekujący punkt zwrotny) wymaga rzutu kością."""
+        for tp in self.turning_points:
+            if tp.status == "oczekujacy":
+                cond = tp.condition
+                # Obsługa, gdy condition to słownik
+                if isinstance(cond, dict):
+                    if cond.get("type") == "rzut":
+                        return True
+                # Obsługa, gdy condition to obiekt Pydantic
+                elif hasattr(cond, "type"):
+                    if cond.type == "rzut":
+                        return True
+                # Jeśli pierwszy napotkany oczekujący punkt ma inny typ (np. 'tura'),
+                # to natychmiast przerywamy pętlę i blokujemy rzut.
+                break
+        return False
 
     def stream_and_parse_response(self, response_stream):
         """Na bieżąco analizuje strumień i rozdziela tekst na GM i Towarzysza."""
@@ -537,29 +577,105 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
-        # --- ZWIĘKSZENIE TURY I RESET BLOKADY RZUTU ---
+        try:
+            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
+            
+            # 1. Inicjalizujemy strumień zapytań
+            response_stream = self.gemini_chat.send_message_stream(prompt)
+            
+            # 2. Próbujemy sparsować i odebrać odpowiedź
+            # Jeśli po drodze wystąpi błąd API lub zerwanie, zostanie rzucony wyjątek
+            success = self.safe_stream_and_parse(response_stream, prompt)
+            
+            if not success:
+                # Jeśli funkcja zwróciła False (np. pusta odpowiedź od modelu), 
+                # przerywamy i NIE zwiększamy tury!
+                return
+
+            print("✅ [API] Zakończono pomyślnie turę i odbieranie odpowiedzi.")
+
+        except Exception as e:
+            # W przypadku jakiegokolwiek błędu sieciowego/API tura NIE jest ruszana
+            print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
+            self.handle_gemini_error(e)
+            
+    def safe_stream_and_parse(self, response_stream, prompt: str) -> bool:
+        """Odbiera strumień i dopiero po sukcesie zalicza turę i zapisuje stan."""
+        full_text = ""
+        gm_finalized = False
+
+        self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
+
+        for chunk in response_stream:
+            if chunk.text:
+                full_text += chunk.text
+
+                if not gm_finalized:
+                    if "[TOWARZYSZ]:" in full_text:
+                        parts = full_text.split("[TOWARZYSZ]:", 1)
+                        gm_text = parts[0].strip()
+                        comp_text = parts[1].strip() if len(parts) > 1 else ""
+
+                        self.update_streaming_message(gm_text)
+                        self.finish_streaming_message()
+                        if gm_text:
+                            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+
+                        companion_name = self.character['name']
+                        self.start_streaming_message(companion_name, "companion_tag")
+                        self.update_streaming_message(comp_text)
+                        gm_finalized = True
+                    else:
+                        self.update_streaming_message(full_text)
+                else:
+                    parts = full_text.split("[TOWARZYSZ]:", 1)
+                    comp_text = parts[1].strip() if len(parts) > 1 else ""
+                    self.update_streaming_message(comp_text)
+
+                self.root.update()
+
+        # Jeśli model nic nie zwrócił (pusta odpowiedź / zablokowanie)
+        if not full_text.strip():
+            self.discard_empty_stream_message()
+            self.show_system_error(
+                "⚠️ Model nie zwrócił żadnej odpowiedzi (mogła zostać zablokowana lub przerwana). "
+                "Spróbuj wysłać wiadomość ponownie albo sformułować ją inaczej."
+            )
+            return False  # Zwracamy False -> tura NIE wzrośnie!
+
+        # Finalizacja tekstu
+        if not gm_finalized:
+            gm_text = self._extract_and_register_npcs(full_text)
+            self.update_streaming_message(gm_text)
+            self.finish_streaming_message()
+            if gm_text:
+                self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+        else:
+            parts = full_text.split("[TOWARZYSZ]:", 1)
+            comp_raw = parts[1].strip() if len(parts) > 1 else ""
+            comp_text = self._extract_and_register_npcs(comp_raw)
+            self.update_streaming_message(comp_text)
+            self.finish_streaming_message()
+            companion_name = self.character['name']
+            if comp_text:
+                self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
+
+        # --- SUKCES! DOPIERO TERAZ ZWIĘKSZAMY TURĘ ---
         self.game_state["tura"] = self.game_state.get("tura", 0) + 1
-        self.game_state["rzut_wykonany"] = False  # <--- TUTAJ ODBLOKOWUJEMY RZUT W NOWEJ TURZE
+        self.game_state["rzut_wykonany"] = False
 
         skutki = process_turn(self.game_state, self.turning_points)
-        self.update_turning_points_ui()
         if skutki:
+            self.game_state["tura"] = 0  
             prompt += "\n" + "\n".join(
                 f"[Punkt zwrotny] {skutek}" for skutek in skutki
             )
 
-        # Zapisujemy ruch gracza do czystej historii
+        self.update_turning_points_ui()
         self.clean_chat_history.append({"sender": "Me", "text": prompt})
         self.has_unsaved_changes = True
 
-        try:
-            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
-            response_stream = self.gemini_chat.send_message_stream(prompt)
-            self.stream_and_parse_response(response_stream)
-            print("✅ [API] Zakończono odbieranie odpowiedzi od Gemini.")
-        except Exception as e:
-            print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
-            self.handle_gemini_error(e)
+        return True
             
     def _extract_and_register_npcs(self, text: str) -> str:
         """Wyciąga znaczniki [NPC: Imię | Opis], rejestruje postacie i czyści tekst z tagów."""

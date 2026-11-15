@@ -10,7 +10,7 @@ def process_turn(
     game_state: dict[str, int | None],
     turning_points: list[TurningPoint],
 ) -> list[str]:
-    game_state["tura"] += 1
+    # Usunięto stąd "game_state['tura'] += 1", ponieważ tura zwiększa się już w main_3.py
     effects = []
 
     for point in get_pending_turning_points(turning_points):
