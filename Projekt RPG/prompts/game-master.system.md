@@ -36,3 +36,8 @@ Opis świata i otoczenia przez Mistrza Gry...
 [TOWARZYSZ]: Wypowiedź towarzysza...
 
 Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
+
+### Zarządzanie postaciami niezależnymi (NPC)
+Gdy w fabule pojawia się po raz pierwszy nowa, ważna postać niezależna (NPC), dodaj na samym końcu swojej wypowiedzi (już po sekcji [TOWARZYSZ]:) znacznik w dokładnym formacie:
+[NPC: Imię Postaci | Krótki opis roli, wyglądu i nastawienia]
+Używaj tego znacznika tylko raz dla danej postaci, przy jej pierwszym spotkaniu.

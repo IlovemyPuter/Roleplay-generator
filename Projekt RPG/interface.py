@@ -336,6 +336,8 @@ class RoleplayChatApp:
 
         self.create_widgets()
         self.send_system_greeting()
+        
+        self.npcs: list[dict[str, str]] = []
 
     def create_widgets(self):
         # 1. Panel postaci po LEWEJ stronie okna
@@ -511,7 +513,7 @@ class RoleplayChatApp:
         self.render_character_cards()
 
     def render_character_cards(self):
-        """Renderuje karty dla postaci gracza oraz towarzysza."""
+        """Renderuje karty dla postaci gracza, towarzysza oraz napotkanych NPC."""
         if not hasattr(self, 'chars_container'):
             return
 
@@ -578,3 +580,29 @@ class RoleplayChatApp:
             justify=tk.LEFT,
             wraplength=245
         ).pack(anchor="w", fill=tk.X, pady=(2, 0))
+
+        # --- SEKCJA 3: NAPOTKANE POSTACIE (NPC) ---
+        if getattr(self, 'npcs', None):
+            npc_section = ttk.LabelFrame(self.chars_container, text=" 👥 Napotkane postacie (NPC) ", padding=8)
+            npc_section.pack(fill=tk.X, padx=5, pady=(10, 5))
+
+            for npc in self.npcs:
+                npc_box = ttk.Frame(npc_section)
+                npc_box.pack(fill=tk.X, pady=(0, 6))
+
+                tk.Label(
+                    npc_box,
+                    text=f"• {npc['name']}",
+                    font=("Arial", 9, "bold"),
+                    fg="#198754",
+                    anchor="w"
+                ).pack(anchor="w", fill=tk.X)
+
+                tk.Label(
+                    npc_box,
+                    text=npc['description'],
+                    font=("Arial", 8),
+                    fg="#333333",
+                    justify=tk.LEFT,
+                    wraplength=235
+                ).pack(anchor="w", fill=tk.X, padx=(8, 0))

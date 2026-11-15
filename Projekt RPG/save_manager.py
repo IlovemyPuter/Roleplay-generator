@@ -9,13 +9,13 @@ def ensure_save_dir():
     if not os.path.exists(SAVE_DIR):
         os.makedirs(SAVE_DIR)
 
-def save_game(character, system_instruction, chat_history, turning_points=None, game_state=None, parent_window=None):
+def save_game(character, system_instruction, chat_history, turning_points=None, game_state=None, parent_window=None, player_character=None):
     """Zapisuje postać, instrukcję systemową, historię czatu oraz punkty zwrotne do pliku JSON."""
     ensure_save_dir()
     
     file_path = filedialog.asksaveasfilename(
         parent=parent_window,
-        initialdir=SAVE_DIR,  # Otwiera okno dialogowe bezpośrednio w folderze savegame
+        initialdir=SAVE_DIR,
         defaultextension=".json",
         filetypes=[("Pliki JSON (*.json)", "*.json"), ("Wszystkie pliki", "*.*")],
         title="Zapisz stan gry"
@@ -34,6 +34,7 @@ def save_game(character, system_instruction, chat_history, turning_points=None, 
 
     save_data = {
         "character": character,
+        "player_character": player_character,  # <--- Zapisujemy postać gracza
         "system_instruction": system_instruction,
         "chat_history": chat_history,
         "turning_points": tp_data,

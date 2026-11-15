@@ -96,6 +96,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         if save_data:
             # TRYB WCZYTANIA: Odtwarzamy stan z pliku JSON
             self.character = save_data["character"]
+            if "player_character" in save_data and save_data["player_character"]:
+                self.player_character = save_data["player_character"]
+            
             self.system_instruction = save_data["system_instruction"]
             self.clean_chat_history = save_data["chat_history"]
 
@@ -103,6 +106,10 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             raw_tps = save_data.get("turning_points", [])
             self.turning_points = [TurningPoint.model_validate(tp) if isinstance(tp, dict) else tp for tp in raw_tps]
             self.game_state = save_data.get("game_state", {"tura": 0, "ostatni_rzut": None})
+            
+            # Przywracamy listę NPC z zapisanego stanu gry i odświeżamy kafelki
+            self.npcs = self.game_state.get("npcs", [])
+            self.render_character_cards()
             
             self.root.after(100, self.restore_loaded_session)
         else:
@@ -172,17 +179,28 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         if success:
             # Podmieniamy stan bieżącej sesji na wczytany
             self.character = data["character"]
-            if "player_character" in data:
+            
+            # Wczytujemy postać gracza, jeśli została zapisana w pliku
+            if "player_character" in data and data["player_character"]:
                 self.player_character = data["player_character"]
-            self.render_character_cards()
+                
             self.system_instruction = data["system_instruction"]
             self.clean_chat_history = data["chat_history"]
+            
+            # Odtwarzanie punktów zwrotnych
             raw_tps = data.get("turning_points", [])
             self.turning_points = [
                 TurningPoint.model_validate(tp) if isinstance(tp, dict) else tp
                 for tp in raw_tps
             ]
+            
+            # Wczytanie stanu gry oraz listy napotkanych NPC
             self.game_state = data.get("game_state", {"tura": 0, "ostatni_rzut": None})
+            self.npcs = self.game_state.get("npcs", [])
+            
+            # Odświeżenie kafelków w lewym panelu (Gracz, Towarzysz, NPC)
+            self.render_character_cards()
+            
             self.has_unsaved_changes = False
 
             # Czyścimy widok czatu i odtwarzamy sesję od nowa
@@ -239,6 +257,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
     def handle_save(self):
         success, result = save_game(
             character=self.character,
+            player_character=self.player_character,  # <--- Przekazujemy gracza do zapisu
             system_instruction=self.system_instruction,
             chat_history=self.clean_chat_history,
             turning_points=self.turning_points,
@@ -453,14 +472,16 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             return
         # Zakończenie strumienia (gdyby model nie podał znacznika)
         if not gm_finalized:
-            gm_text = full_text.strip()
+            gm_text = self._extract_and_register_npcs(full_text)
             self.update_streaming_message(gm_text)
             self.finish_streaming_message()
             if gm_text:
                 self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
         else:
             parts = full_text.split("[TOWARZYSZ]:", 1)
-            comp_text = parts[1].strip() if len(parts) > 1 else ""
+            comp_raw = parts[1].strip() if len(parts) > 1 else ""
+            comp_text = self._extract_and_register_npcs(comp_raw)
+            self.update_streaming_message(comp_text)
             self.finish_streaming_message()
             companion_name = self.character['name']
             if comp_text:
@@ -539,6 +560,31 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         except Exception as e:
             print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
             self.handle_gemini_error(e)
+            
+    def _extract_and_register_npcs(self, text: str) -> str:
+        """Wyciąga znaczniki [NPC: Imię | Opis], rejestruje postacie i czyści tekst z tagów."""
+        pattern = r"\[NPC:\s*(.*?)\s*\|\s*(.*?)\]"
+        matches = re.findall(pattern, text)
+
+        if matches:
+            existing_names = {n["name"].lower() for n in self.npcs}
+            added_any = False
+
+            for name, desc in matches:
+                clean_name = name.strip()
+                clean_desc = desc.strip()
+                if clean_name and clean_name.lower() not in existing_names:
+                    self.npcs.append({"name": clean_name, "description": clean_desc})
+                    existing_names.add(clean_name.lower())
+                    added_any = True
+
+            if added_any:
+                self.game_state["npcs"] = self.npcs
+                self.render_character_cards()
+
+        # Usuwamy znaczniki techniczne z tekstu, który trafi do historii czatu
+        cleaned_text = re.sub(pattern, "", text).strip()
+        return cleaned_text
 
 # --- Zmodyfikowana funkcja startowa obsługująca dane gracza i towarzysza ---
 def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
