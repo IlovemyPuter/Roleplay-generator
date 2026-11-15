@@ -263,22 +263,71 @@ class CharacterSelectWindow:
         self.canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def select_character(self, character):
-        """Zamyka okno wyboru i przekazuje wybraną postać do głównej aplikacji."""
-        self.root.destroy()
-        self.on_character_selected(character)
+        """Otwiera okno dialogowe do podania własnych danych gracza, a następnie uruchamia grę."""
+        # Tworzymy małe okno dialogowe Toplevel do personalizacji gracza
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Twoja postać (Gracz)")
+        dialog.geometry("450x400")
+        dialog.grab_set()  # Blokuje okno główne do momentu zamknięcia dialogu
+
+        ttk.Label(dialog, text="Wprowadź dane swojej postaci:", font=("Arial", 12, "bold")).pack(pady=(15, 10))
+
+        form_frame = ttk.Frame(dialog, padding=10)
+        form_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 1. Imię gracza
+        ttk.Label(form_frame, text="Twoje imię / nazwa:", font=("Arial", 9, "bold")).pack(anchor="w")
+        name_entry = ttk.Entry(form_frame, font=("Arial", 10))
+        name_entry.pack(fill=tk.X, pady=(2, 10))
+        name_entry.insert(0, "Bohater")
+
+        # 2. Tło i rola
+        ttk.Label(form_frame, text="Tło i rola (kim jesteś?):", font=("Arial", 9, "bold")).pack(anchor="w")
+        bg_text = scrolledtext.ScrolledText(form_frame, height=4, font=("Arial", 9), wrap=tk.WORD)
+        bg_text.pack(fill=tk.BOTH, expand=True, pady=(2, 10))
+        bg_text.insert("1.0", "Wędrowiec szukający własnej ścieżki w nieprzyjaznym świecie.")
+
+        # 3. Osobowość / Cechy
+        ttk.Label(form_frame, text="Cechy osobowości:", font=("Arial", 9, "bold")).pack(anchor="w")
+        personality_entry = ttk.Entry(form_frame, font=("Arial", 10))
+        personality_entry.pack(fill=tk.X, pady=(2, 15))
+        personality_entry.insert(0, "Ostrożny, zdeterminowany, ciekawski.")
+
+        player_data = {}
+
+        def on_confirm():
+            player_data["name"] = name_entry.get().strip() or "Bohater"
+            player_data["role_and_background"] = bg_text.get("1.0", tk.END).strip()
+            player_data["personality"] = personality_entry.get().strip()
+            dialog.destroy()
+
+            # Zamykamy okno wyboru postaci i przekazujemy dane do gry
+            self.root.destroy()
+            # Wywołujemy funkcję zwrotną, przekazując towarzysza ORAZ słownik gracza
+            self.on_character_selected(character, player_data)
+
+        confirm_btn = ttk.Button(dialog, text="Rozpocznij przygodę", command=on_confirm)
+        confirm_btn.pack(pady=(0, 15), ipadx=10, ipady=5)
 
 
 class RoleplayChatApp:
     """Główne okno czatu z LLM."""
 
-    def __init__(self, root, character):
+    def __init__(self, root, character, player_character=None):
         self.root = root
-        self.character = character
-        self.root.title(f"LLM Roleplay - Rozmawiasz z: {character['name']}")
-        self.root.geometry("1000x650")
-        self.root.minsize(800, 450)
+        self.character = character  # Towarzysz AI
+        # Domyślne dane postaci gracza, jeśli nie przekazano osobnego słownika
+        self.player_character = player_character or {
+            "name": "Gracz (Ty)",
+            "role_and_background": "Główny bohater opowieści podejmujący kluczowe decyzje.",
+            "personality": "Zdeterminowany, reagujący na zmieniający się świat."
+        }
 
-        # Stan potrzebny do oceny warunków punktów zwrotnych (patrz turning_point.is_ready)
+        self.root.title(f"LLM Roleplay - Rozmawiasz z: {character['name']}")
+        self.root.geometry("1280x700")  # Zwiększona szerokość, aby pomieścić 3 kolumny
+        self.root.minsize(1000, 500)
+
+        # Stan potrzebny do oceny warunków punktów zwrotnych
         self.turning_points: list[TurningPoint] = []
         self.game_state: dict[str, int | None] = {"tura": 0, "ostatni_rzut": None}
 
@@ -287,13 +336,20 @@ class RoleplayChatApp:
 
         self.create_widgets()
         self.send_system_greeting()
+        
+        self.npcs: list[dict[str, str]] = []
 
     def create_widgets(self):
-        # Panel punktów zwrotnych pakujemy jako pierwszy (prawa strona okna)
+        # 1. Panel postaci po LEWEJ stronie okna
+        self.create_characters_panel()
+
+        # 2. Panel punktów zwrotnych po PRAWEJ stronie okna
         self.create_turning_points_panel()
 
+        # 3. Główny obszar czatu na ŚRODKU
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
         # ------------------------------------------------------------------
         # 0. Pasek przycisków akcji nad czatem (Zapisz / Wczytaj)
         # ------------------------------------------------------------------
@@ -352,6 +408,34 @@ class RoleplayChatApp:
         send_button = ttk.Button(input_frame, text="Wyślij", command=self.send_message)
         send_button.pack(side=tk.RIGHT)
 
+    def create_turning_points_panel(self):
+        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych w postaci wielolinijkowych kart."""
+        panel = ttk.LabelFrame(self.root, text=" Punkty zwrotne ", padding=8)
+        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+
+        self.state_label = ttk.Label(panel, font=("Arial", 10, "bold"))
+        self.state_label.pack(anchor="w", pady=(0, 6))
+
+        # Kontener z przewijaniem pionowym dla punktów zwrotnych
+        container = ttk.Frame(panel)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.points_canvas = tk.Canvas(container, bg="#f0f2f5", highlightthickness=0, width=320)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.points_canvas.yview)
+
+        # Ramka mieszcząca karty punktów zwrotnych
+        self.points_container = ttk.Frame(self.points_canvas)
+        self.points_container.bind(
+            "<Configure>",
+            lambda e: self.points_canvas.configure(scrollregion=self.points_canvas.bbox("all"))
+        )
+
+        self.points_canvas.create_window((0, 0), window=self.points_container, anchor="nw")
+        self.points_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.points_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
     def append_message(self, sender: str, message: str, tag_name: str):
         self.chat_display.config(state=tk.NORMAL)
         self.chat_display.insert(tk.END, f"{sender}: ", tag_name)
@@ -402,34 +486,123 @@ class RoleplayChatApp:
         self.chat_display.insert(tk.END, "\n\n")
         self.chat_display.config(state=tk.DISABLED)
         self.chat_display.see(tk.END)
+        
+    def create_characters_panel(self):
+        """Panel po lewej stronie okna: karty postaci gracza oraz towarzysza."""
+        panel = ttk.LabelFrame(self.root, text=" Postacie ", padding=8)
+        panel.pack(side=tk.LEFT, fill=tk.Y, padx=(10, 0), pady=10)
 
-    # ------------------------------------------------------------------
-    # Panel punktów zwrotnych i rzut kością
-    # ------------------------------------------------------------------
-    def create_turning_points_panel(self):
-        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych."""
-        panel = ttk.LabelFrame(self.root, text=" Punkty zwrotne ", padding=8)
-        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+        container = ttk.Frame(panel)
+        container.pack(fill=tk.BOTH, expand=True)
 
-        self.state_label = ttk.Label(panel, font=("Arial", 10, "bold"))
-        self.state_label.pack(anchor="w", pady=(0, 6))
+        self.chars_canvas = tk.Canvas(container, bg="#f0f2f5", highlightthickness=0, width=280)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.chars_canvas.yview)
 
-        self.points_tree = ttk.Treeview(
-            panel,
-            columns=("id", "title", "description", "status"),
-            show="headings",
-            height=5,
-            selectmode="none",
+        self.chars_container = ttk.Frame(self.chars_canvas)
+        self.chars_container.bind(
+            "<Configure>",
+            lambda e: self.chars_canvas.configure(scrollregion=self.chars_canvas.bbox("all"))
         )
-        self.points_tree.heading("id", text="#")
-        self.points_tree.heading("title", text="Tytuł")
-        self.points_tree.heading("description", text="Opis")
-        self.points_tree.heading("status", text="Stan")
-        self.points_tree.column("id", width=30, anchor="center", stretch=False)
-        self.points_tree.column("title", width=170, anchor="w")
-        self.points_tree.column("description", width=80, anchor="center", stretch=False)
-        self.points_tree.column("status", width=110, anchor="w", stretch=False)
-        self.points_tree.pack(fill=tk.BOTH, expand=True)
 
-        self.points_tree.tag_configure("oczekujacy", foreground="#198754")
-        self.points_tree.tag_configure("wykonany", foreground="#6c757d")
+        self.chars_canvas.create_window((0, 0), window=self.chars_container, anchor="nw")
+        self.chars_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.chars_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.render_character_cards()
+
+    def render_character_cards(self):
+        """Renderuje karty dla postaci gracza, towarzysza oraz napotkanych NPC."""
+        if not hasattr(self, 'chars_container'):
+            return
+
+        for widget in self.chars_container.winfo_children():
+            widget.destroy()
+
+        # --- KARTA 1: POSTAĆ GRACZA ---
+        player_card = ttk.LabelFrame(self.chars_container, text=" 🗡️ Twoja postać ", padding=8)
+        player_card.pack(fill=tk.X, padx=5, pady=(5, 10))
+
+        tk.Label(
+            player_card,
+            text=self.player_character.get("name", "Gracz"),
+            font=("Arial", 10, "bold"),
+            fg="#0b5ed7",
+            anchor="w"
+        ).pack(anchor="w", fill=tk.X)
+
+        tk.Label(
+            player_card,
+            text=f"Tło: {self.player_character.get('role_and_background', '')}",
+            font=("Arial", 9),
+            fg="#222222",
+            justify=tk.LEFT,
+            wraplength=245
+        ).pack(anchor="w", fill=tk.X, pady=(4, 2))
+
+        if self.player_character.get("personality"):
+            tk.Label(
+                player_card,
+                text=f"Cechy: {self.player_character.get('personality')}",
+                font=("Arial", 9, "italic"),
+                fg="#555555",
+                justify=tk.LEFT,
+                wraplength=245
+            ).pack(anchor="w", fill=tk.X, pady=(2, 0))
+
+        # --- KARTA 2: TOWARZYSZ ---
+        comp_card = ttk.LabelFrame(self.chars_container, text=" 🛡️ Towarzysz ", padding=8)
+        comp_card.pack(fill=tk.X, padx=5, pady=5)
+
+        tk.Label(
+            comp_card,
+            text=self.character.get("name", "Towarzysz"),
+            font=("Arial", 10, "bold"),
+            fg="#6f42c1",
+            anchor="w"
+        ).pack(anchor="w", fill=tk.X)
+
+        tk.Label(
+            comp_card,
+            text=f"Rola: {self.character.get('role_and_background', '')}",
+            font=("Arial", 9),
+            fg="#222222",
+            justify=tk.LEFT,
+            wraplength=245
+        ).pack(anchor="w", fill=tk.X, pady=(4, 4))
+
+        tk.Label(
+            comp_card,
+            text=f"Osobowość: {self.character.get('personality', '')}",
+            font=("Arial", 9),
+            fg="#444444",
+            justify=tk.LEFT,
+            wraplength=245
+        ).pack(anchor="w", fill=tk.X, pady=(2, 0))
+
+        # --- SEKCJA 3: NAPOTKANE POSTACIE (NPC) ---
+        if getattr(self, 'npcs', None):
+            npc_section = ttk.LabelFrame(self.chars_container, text=" 👥 Napotkane postacie (NPC) ", padding=8)
+            npc_section.pack(fill=tk.X, padx=5, pady=(10, 5))
+
+            for npc in self.npcs:
+                npc_box = ttk.Frame(npc_section)
+                npc_box.pack(fill=tk.X, pady=(0, 6))
+
+                tk.Label(
+                    npc_box,
+                    text=f"• {npc['name']}",
+                    font=("Arial", 9, "bold"),
+                    fg="#198754",
+                    anchor="w"
+                ).pack(anchor="w", fill=tk.X)
+
+                tk.Label(
+                    npc_box,
+                    text=npc['description'],
+                    font=("Arial", 8),
+                    fg="#333333",
+                    justify=tk.LEFT,
+                    wraplength=235
+                ).pack(anchor="w", fill=tk.X, padx=(8, 0))
