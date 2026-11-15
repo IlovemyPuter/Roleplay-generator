@@ -278,7 +278,7 @@ class RoleplayChatApp:
         self.root.geometry("1000x650")
         self.root.minsize(800, 450)
 
-        # Stan potrzebny do oceny warunków punktów zwrotnych (patrz turning_point.is_ready)
+        # Stan potrzebny do oceny warunków punktów zwrotnych
         self.turning_points: list[TurningPoint] = []
         self.game_state: dict[str, int | None] = {"tura": 0, "ostatni_rzut": None}
 
@@ -294,6 +294,7 @@ class RoleplayChatApp:
 
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
         # ------------------------------------------------------------------
         # 0. Pasek przycisków akcji nad czatem (Zapisz / Wczytaj)
         # ------------------------------------------------------------------
@@ -352,6 +353,34 @@ class RoleplayChatApp:
         send_button = ttk.Button(input_frame, text="Wyślij", command=self.send_message)
         send_button.pack(side=tk.RIGHT)
 
+    def create_turning_points_panel(self):
+        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych w postaci wielolinijkowych kart."""
+        panel = ttk.LabelFrame(self.root, text=" Punkty zwrotne ", padding=8)
+        panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+
+        self.state_label = ttk.Label(panel, font=("Arial", 10, "bold"))
+        self.state_label.pack(anchor="w", pady=(0, 6))
+
+        # Kontener z przewijaniem pionowym dla punktów zwrotnych
+        container = ttk.Frame(panel)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.points_canvas = tk.Canvas(container, bg="#f0f2f5", highlightthickness=0, width=320)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.points_canvas.yview)
+
+        # Ramka mieszcząca karty punktów zwrotnych
+        self.points_container = ttk.Frame(self.points_canvas)
+        self.points_container.bind(
+            "<Configure>",
+            lambda e: self.points_canvas.configure(scrollregion=self.points_canvas.bbox("all"))
+        )
+
+        self.points_canvas.create_window((0, 0), window=self.points_container, anchor="nw")
+        self.points_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.points_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
     def append_message(self, sender: str, message: str, tag_name: str):
         self.chat_display.config(state=tk.NORMAL)
         self.chat_display.insert(tk.END, f"{sender}: ", tag_name)
@@ -406,30 +435,30 @@ class RoleplayChatApp:
     # ------------------------------------------------------------------
     # Panel punktów zwrotnych i rzut kością
     # ------------------------------------------------------------------
-    def create_turning_points_panel(self):
-        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych."""
+def create_turning_points_panel(self):
+        """Panel po prawej stronie okna: stan gry oraz lista punktów zwrotnych w postaci wielolinijkowych kart."""
         panel = ttk.LabelFrame(self.root, text=" Punkty zwrotne ", padding=8)
         panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
 
         self.state_label = ttk.Label(panel, font=("Arial", 10, "bold"))
         self.state_label.pack(anchor="w", pady=(0, 6))
 
-        self.points_tree = ttk.Treeview(
-            panel,
-            columns=("id", "title", "description", "status"),
-            show="headings",
-            height=5,
-            selectmode="none",
-        )
-        self.points_tree.heading("id", text="#")
-        self.points_tree.heading("title", text="Tytuł")
-        self.points_tree.heading("description", text="Opis")
-        self.points_tree.heading("status", text="Stan")
-        self.points_tree.column("id", width=30, anchor="center", stretch=False)
-        self.points_tree.column("title", width=170, anchor="w")
-        self.points_tree.column("description", width=80, anchor="center", stretch=False)
-        self.points_tree.column("status", width=110, anchor="w", stretch=False)
-        self.points_tree.pack(fill=tk.BOTH, expand=True)
+        # Kontener z przewijaniem pionowym dla punktów zwrotnych
+        container = ttk.Frame(panel)
+        container.pack(fill=tk.BOTH, expand=True)
 
-        self.points_tree.tag_configure("oczekujacy", foreground="#198754")
-        self.points_tree.tag_configure("wykonany", foreground="#6c757d")
+        self.points_canvas = tk.Canvas(container, bg="#f0f2f5", highlightthickness=0, width=320)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=self.points_canvas.yview)
+
+        # Ramka mieszcząca karty punktów zwrotnych
+        self.points_container = ttk.Frame(self.points_canvas)
+        self.points_container.bind(
+            "<Configure>",
+            lambda e: self.points_canvas.configure(scrollregion=self.points_canvas.bbox("all"))
+        )
+
+        self.points_canvas.create_window((0, 0), window=self.points_container, anchor="nw")
+        self.points_canvas.configure(yscrollcommand=scrollbar.set)
+
+        self.points_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)

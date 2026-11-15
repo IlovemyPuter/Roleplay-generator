@@ -14,7 +14,8 @@ def process_turn(
     effects = []
 
     for point in get_pending_turning_points(turning_points):
-        if is_ready(point, game_state):
+        # Przekazujemy całą listę turning_points, aby zadziałała blokada sekwencyjna!
+        if is_ready(point, game_state, all_turning_points=turning_points):
             mark_executed(point)
             effects.append(point.effect)
 

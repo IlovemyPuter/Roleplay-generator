@@ -31,17 +31,34 @@ class TurningPoint(BaseModel):
     status: Literal["oczekujacy", "wykonany"]
 
 
-def is_ready(
-    point: TurningPoint,
-    game_state: Mapping[str, int | None],
-) -> bool:
-    """Sprawdza stan punktu i próg tury lub ostatniego rzutu kością."""
+def is_ready(point: TurningPoint, game_state: dict, all_turning_points: list[TurningPoint] = None) -> bool:
+    """Sprawdza, czy punkt jest gotowy do wykonania.
+    Warunki:
+    - Punkt musi mieć status 'oczekujacy'.
+    - Musi być pierwszym z nierozwiązanych punktów (sekwencyjność: żaden punkt nie może się wykonać, dopóki poprzedni nie jest zaliczony).
+    - Spełnione muszą być kryteria tur lub rzutów.
+    """
     if point.status != "oczekujacy":
         return False
 
-    state_key = "tura" if point.condition.type == "tura" else "ostatni_rzut"
-    current_value = game_state.get(state_key)
-    return current_value is not None and current_value >= point.condition.value
+    # Sprawdzenie sekwencyjności: czy wszystkie wcześniejsze punkty są już wykonane
+    if all_turning_points:
+        for p in all_turning_points:
+            if p.id < point.id and p.status != "wykonany":
+                return False  # Poprzedni punkt nie jest jeszcze zaliczony, więc ten stoi w miejscu!
+
+    # Sprawdzenie warunków (tura / rzut)
+    cond = point.condition
+    if cond.type == "tura":
+        current_turn = game_state.get("tura", 0)
+        return current_turn >= cond.value
+    elif cond.type == "rzut":
+        last_roll = game_state.get("ostatni_rzut")
+        if last_roll is None:
+            return False
+        return last_roll >= cond.value
+
+    return False
 
 
 def mark_executed(point: TurningPoint) -> None:

@@ -4,6 +4,7 @@ import random
 import re
 
 from pydantic import ValidationError
+from error_handler import build_user_error_message
 
 from config import CHAT_TEMPERATURE, load_config
 
@@ -12,6 +13,7 @@ from google.genai import types
 
 # Importujemy interfejs graficzny
 import tkinter as tk
+from tkinter import ttk
 
 # Importujemy dane postaci i klasy okien z pliku interface.py
 from interface import CharacterSelectWindow, RoleplayChatApp
@@ -77,6 +79,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.chat_display.tag_config("error_tag", foreground="#dc3545", font=("Arial", 10, "bold"))
 
         self.has_unsaved_changes = False
+        self.game_state = {"tura": 0, "ostatni_rzut": None, "rzut_wykonany": False}
 
         # --- BINDOWANIE KLAWISZY ---
         root.bind("<F5>", lambda event: self.handle_save())
@@ -111,25 +114,57 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.root.after(100, self.init_gemini_chat)
 
     def update_turning_points_ui(self):
-        """Odświeża tabelę punktów zwrotnych oraz etykietę stanu gry w panelu."""
+        """Odświeża listę punktów zwrotnych oraz etykietę stanu gry w panelu."""
         if hasattr(self, 'state_label') and self.state_label:
             tura = self.game_state.get("tura", 0)
             rzut = self.game_state.get("ostatni_rzut")
             rzut_str = str(rzut) if rzut is not None else "brak"
             self.state_label.config(text=f"Stan gry: Tura {tura} | Ostatni rzut: {rzut_str}")
 
-        if hasattr(self, 'points_tree') and self.points_tree:
-            for row in self.points_tree.get_children():
-                self.points_tree.delete(row)
+        if hasattr(self, 'points_container') and self.points_container:
+            # Czyszczenie starych kart
+            for widget in self.points_container.winfo_children():
+                widget.destroy()
+
+            # Generowanie nowej karty dla każdego punktu zwrotnego
             for tp in self.turning_points:
+                status_color = "#198754" if tp.status == "oczekujacy" else "#6c757d"
                 status_text = "Oczekujący" if tp.status == "oczekujacy" else "Wykonany"
-                tag = "oczekujacy" if tp.status == "oczekujacy" else "wykonany"
-                self.points_tree.insert(
-                    "",
-                    tk.END,
-                    values=(tp.id, tp.title, tp.description, status_text),
-                    tags=(tag,)
+
+                # Ramka pojedynczego punktu zwrotnego (kafelek)
+                card = ttk.LabelFrame(self.points_container, padding=8)
+                card.pack(fill=tk.X, padx=5, pady=5)
+
+                # 1. Tytuł (mniejsza czcionka)
+                title_label = tk.Label(
+                    card,
+                    text=f"#{tp.id}: {tp.title}",
+                    font=("Arial", 9, "bold"),
+                    fg="#333333",
+                    anchor="w"
                 )
+                title_label.pack(anchor="w", fill=tk.X)
+
+                # 2. Opis (WIĘKSZA czcionka niż tytuł + automatyczne zawijanie wierszy)
+                desc_label = tk.Label(
+                    card,
+                    text=tp.description,
+                    font=("Arial", 11),  # Większa czcionka zgodnie z wymaganiem
+                    fg="#111111",
+                    justify=tk.LEFT,
+                    wraplength=280  # Szerokość zawijania tekstu dopasowana do panelu
+                )
+                desc_label.pack(anchor="w", fill=tk.X, pady=(4, 4))
+
+                # 3. Status punktu
+                status_label = tk.Label(
+                    card,
+                    text=f"Stan: {status_text}",
+                    font=("Arial", 8, "italic"),
+                    fg=status_color,
+                    anchor="e"
+                )
+                status_label.pack(anchor="e")
 
     def handle_load_in_game(self):
         """Obsługa wczytywania gry z poziomu aktywnego czatu (przycisk lub F8)."""
@@ -258,7 +293,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
     def init_gemini_chat(self):
         if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "system_tag")
+            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "error_tag")
             self.gemini_chat = None
             return
 
@@ -278,51 +313,32 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.turning_points = []
             self.update_turning_points_ui()
 
-        # Osobowość i zasady dla AI (System Instruction)
+        # Wczytanie instrukcji systemowej Mistrza Gry z pliku z folderu prompts/
+        from config import GAME_MASTER_SYSTEM_INSTRUCTION_PATH
+        try:
+            template_text = GAME_MASTER_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"⚠️ [API] Nie udało się wczyta pliku promptu GM: {e}")
+            template_text = "Jesteś Mistrzem Gry i towarzyszem {character_name}."
+
         char = self.character
-        self.system_instruction = f"""
-Jesteś jednocześnie Mistrzem Gry (Game Masterem) w sesji RPG oraz wcielasz się w postać towarzyszącą graczowi o imieniu: {char['name']}.
+        # Podstawienie danych postaci do szablonu promptu
+        self.system_instruction = template_text.format(
+            character_name=char['name'],
+            role_and_background=char['role_and_background'],
+            personality=char['personality'],
+            conversation_style=char['conversation_style'],
+            knowledge_and_limits=char['knowledge_and_limits'],
+            example_dialogue=char['example_dialogue']
+        )
 
-TWOJE ZADANIA JAKO MISTRZA GRY (GM):
-1. Prowadzisz fabułę, opisujesz świat, otoczenie, pogodę, zagrożenia oraz reakcje otoczenia i innych napotkanych postaci niezależnych (NPC).
-2. Sprawiasz, że świat żyje i reaguje na decyzje gracza w sposób konsekwentny.
-3. Opisuj świat zwięźle, ale plastycznie (angażuj zmysły: wzrok, słuch, zapach).
-4. Postacie niezależne (NPC) mają własne motywacje, cele i charakter – nie są tylko "tłem".
-5. NIE PODEJMUJ decyzji za postać gracza.
-
-TWOJA ROLA JAKO TOWARZYSZA ({char['name']}):
-1. Musisz ściśle trzymać się profilu tej postaci:
-   - Rola i tło: {char['role_and_background']}
-   - Osobowość: {char['personality']}
-   - Styl konwersacji: {char['conversation_style']}
-   - Wiedza i ograniczenia: {char['knowledge_and_limits']}
-   - Przykłady dialogowe: {char['example_dialogue']}
-2. Twoja postać rozmawia z graczem, wyraża swoje zdanie, doradza lub komentuje sytuację z perspektywy pierwszej osoby, zachowując swój unikalny charakter.
-3. **ZAKAZ PODSUWANIA DECYZJI:** Twoja postać NIGDY nie podaje propozycji gotowych wyborów, opcji ani alternatyw typu "idziemy tak czy siak?". Możesz wyrazić swoją opinię, wątpliwość lub niezadowolenie, ale ostateczny ruch, plan i decyzja należą w 100% do gracza. Zawsze kończ wypowiedź pytaniem zostawiającym całkowitą inicjatywę graczowi.
-4. **ZAKOŃCZENIE WYPOWIEDZI:** Zawsze kończ swoją wypowiedź naturalnym zawieszeniem akcji, pytaniem otwartym lub presją sytuacji z perspektywy postaci ({char['name']}) lub świata. Unikaj mechanicznych sformułożeń typu "Co robisz?", "Wybierz ruch" czy sztucznych opcji. Zamiast tego niech postać np. czeka na Twój krok, spogląda wyczekująco lub komentuje rozwijające się zagrożenie, zostawiając pełną inicjatywę graczowi.
-
-🚨 UNIWERSALNE ZASADY SPÓJNOŚCI I KONTROLI ŚWIATA (LORE):
-1. **Ścisłe poszanowanie konwencji świata:** Prawa fizyczne, obecność/brak magii, technologia oraz realia epoki zdefiniowane w "Roli i tle" ({char['role_and_background']}) są nienaruszalne. 
-2. **Blokada nierealnych akcji (Brak uległości wobec gracza):** Jeśli gracz spróbuje zrobić coś sprzecznego z logiką świata (np. użyć magii w świecie bez magii) lub wykraczającego poza "Wiedzę i ograniczenia" ({char['knowledge_and_limits']}), **nigdy nie pozwalaj na to**. Mistrz Gry musi opisać brak efektu, absurdalność pomysłu lub fizyczną niemożliwość, a {char['name']} powinna zareagować na to realistycznie ze swojej perspektywy (np. odmówić, upomnieć lub uznać gracza za szaleńca).
-3. **KONTROLA ŚWIATA I FAKTÓW (ZAKAZ TWORZENIA RZECZYWISTOŚCI PRZEZ GRACZA):** Tylko i wyłącznie Mistrz Gry decyduje o tym, co znajduje się w otoczeniu, jakie postacie tam są i co się dzieje. Gracz NIE MA MOCY tworzenia elementów świata. Jeśli gracz spróbuje wejść w interakcję z czymś, czego nie było w opisie (np. "flirtuję z duchem" w pustym pokoju albo "wyciągam ukryty miecz laserowy"), **Mistrz Gry musi to bezwzględnie zablokować**. Zareaguj realizmem: gracz mówi do pustej ściany / macha rękami w powietrzu, a {char['name']} patrzy na niego jak na wariata lub pyta z drwiną, z kim do cholery rozmawia. Nigdy nie pozwól, aby wymysł gracza nagle stał się rzeczywistością, jeśli wcześniej nie został opisany przez GM-a.
-
-STRUKTURA ODPOWIEDZI:
-W każdej odpowiedzi podziel swoją wypowiedź na dwie wyraźne części:
-1. Najpierw opisz sytuację jako bezstronny Mistrz Gry (co się dzieje w świecie).
-2. Następnie w nowej linijce dodaj słowo kluczowe `[TOWARZYSZ]:`, po którym następuje wypowiedź lub reakcja postaci ({char['name']}) w jej unikalnym stylu. 
-Przykład struktury:
-Opis świata i otoczenia przez Mistrza Gry...
-[TOWARZYSZ]: Wypowiedź towarzysza...
-
-Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
-"""
         try:
             # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
             self.gemini_chat = client.chats.create(
                 model=model,
                 config=types.GenerateContentConfig(
                     system_instruction=self.system_instruction,
-                    temperature=CHAT_TEMPERATURE, # Wyższa temperatura = bardziej kreatywne opisy
+                    temperature=CHAT_TEMPERATURE,
                 )
             )
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
@@ -357,59 +373,9 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         self._start_on_new_line()
         self.append_message("System", message, "error_tag")
 
-    def handle_gemini_error(self, e):
-        """Zamienia błąd API (limit, zły JSON, klucz, przeciążenie, timeout) na czytelny komunikat w oknie gry."""
-        # Jeśli błąd niesie własny tekst dla gracza, pokazujemy go bez zmian.
-        user_message = getattr(e, "user_message", None)
-        if isinstance(user_message, str) and user_message.strip():
-            self.show_system_error(user_message.strip())
-            return
-
-        error_str = str(e)
-        kind = classify_api_error(e)
-
-        if kind == "limit":
-            error_msg = (
-                "⏳ Wyczerpano limit zapytań do API (błąd 429)\n"
-                f"• Limit odnowi się za: {format_retry_time(error_str)}\n"
-                "• Gra nie została przerwana. Możesz ją zapisać (F5) i wrócić do niej później.\n\n"
-                "🛠️ Jak obejść ten problem?\n"
-                "1. Płatny plan: w Google AI Studio przejdź na plan Pay-as-you-go.\n"
-                "2. Inne konto: wygeneruj klucz API na innym koncie Google i podmień go w aplikacji.\n"
-                "3. Inny model: zmień model na taki, który ma osobną pulę zapytań."
-            )
-        elif kind == "json":
-            details = error_str.strip().replace("\n", " ")
-            if len(details) > 200:
-                details = details[:200] + "…"
-            error_msg = (
-                "⚠️ Model zwrócił odpowiedź w niepoprawnym formacie (błąd JSON)\n"
-                "• Aplikacja ponowiła zapytanie kilka razy, ale odpowiedź nadal była niepoprawna.\n"
-                f"• Szczegóły: {details}\n\n"
-                "🛠️ Spróbuj ponownie za chwilę. Gra nie została przerwana."
-            )
-        elif kind == "klucz":
-            error_msg = (
-                "❌ Niepoprawny klucz API (błąd 400)\n"
-                "• Podany klucz API jest nieważny lub został błędnie wpisany.\n\n"
-                "🛠️ Jak to naprawić?\n"
-                "1. Wejdź na stronę Google AI Studio (aistudio.google.com).\n"
-                "2. Wygeneruj nowy klucz API.\n"
-                "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową GEMINI_API_KEY."
-            )
-        elif kind == "przeciazenie":
-            error_msg = (
-                "⚠️ Model Gemini jest obecnie mocno obciążony (błąd 503). "
-                "To chwilowy problem po stronie Google. Spróbuj wysłać wiadomość ponownie za kilka sekund."
-            )
-        elif kind == "timeout":
-            error_msg = (
-                "⚠️ Model nie odpowiedział w oczekiwanym czasie. "
-                "Sprawdź połączenie z internetem i spróbuj wysłać wiadomość ponownie."
-            )
-        else:
-            error_msg = f"Wystąpił błąd podczas komunikacji z API: {e}"
-
+    def handle_gemini_error(self, e: Exception):
+        """Zamienia błąd API na czytelny komunikat w oknie gry."""
+        error_msg = build_user_error_message(e)
         self.show_system_error(error_msg)
 
     def discard_empty_stream_message(self):
@@ -419,10 +385,19 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         self.chat_display.config(state=tk.DISABLED)
 
     def handle_roll(self):
-        """Rzut k20: zapisuje wynik (liczba całkowita 1-20) w stanie gry pod kluczem ostatni_rzut."""
+        """Rzut k20: pozwala na wykonanie tylko jednego rzutu w danej turze."""
+        if self.game_state.get("rzut_wykonany", False):
+            self.append_message("System", "⚠️ W tej turze wykonano już rzut kością. Wyślij wiadomość do Mistrza Gry, aby przejść do następnej tury.", "error_tag")
+            return
+
+        # Wykonanie rzutu i zabezpieczenie przed ponownym kliknięciem w tej samej turze
         self.game_state["ostatni_rzut"] = random.randint(1, 20)
+        self.game_state["rzut_wykonany"] = True  
         self.has_unsaved_changes = True
-        self.update_turning_points_ui()  # odświeża etykietę "Ostatni rzut: N"
+        
+        # Informacja o wyniku w czacie oraz odświeżenie panelu
+        self.append_message("System", f"🎲 Wykonano rzut kością k20. Wynik: **{self.game_state['ostatni_rzut']}**", "system_tag")
+        self.update_turning_points_ui()
 
     def stream_and_parse_response(self, response_stream):
         """Na bieżąco analizuje strumień i rozdziela tekst na GM i Towarzysza."""
@@ -489,23 +464,42 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
                 self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
 
     def start_adventure(self):
-        """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
+        """Wysyła ukryty prompt startowy zawierający pełną listę punktów zwrotnych."""
         if not self.gemini_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
-        intro_prompt = (
-            "Rozpocznij sesję RPG. Jako Mistrz Gry stwórz krótkie, klimatyczne wprowadzenie do świata, "
-            "które bezwzględnie opiera się na realiach, epoce i kontekście opisanym w tle postaci: "
-            f"\"{self.character['role_and_background']}\". "
-            "Następnie wpisz znacznik [TOWARZYSZ]: i spraw, aby moja towarzyszka/mój towarzysz "
-            f"({self.character['name']}) odezwał(-a) się(-a) po raz pierwszy w swoim unikalnym stylu,"
-            "komentując obecną sytuację, bez podawania gotowych propozycji dalszych kroków."
+        # Przygotowanie czytelnej listy 5 punktów zwrotnych dla Mistrza Gry
+        tp_descriptions = []
+        for tp in self.turning_points:
+            tp_descriptions.append(
+                f"- Punkt {tp.id} [{tp.title}]: {tp.description} (Efekt: {tp.effect})"
+            )
+        turning_points_str = "\n".join(tp_descriptions) if tp_descriptions else "Brak zaplanowanych punktów zwrotnych."
+
+        # Wczytanie szablonu promptu startowego z pliku Markdown
+        from config import START_ADVENTURE_PROMPT_PATH
+        try:
+            template_text = START_ADVENTURE_PROMPT_PATH.read_text(encoding="utf-8")
+        except Exception as e:
+            print(f"⚠️ [API] Nie udało się wczytać pliku promptu startowego: {e}")
+            template_text = (
+                "Rozpocznij sesję RPG na podstawie tła: \"{role_and_background}\". "
+                "Oto punkty zwrotne:\n{turning_points_list}\n"
+                "Napisz wprowadzenie i dodaj [TOWARZYSZ]: dla {character_name}."
+            )
+
+        # Uzupełnienie szablonu danymi postaci oraz punktami zwrotnymi
+        intro_prompt = template_text.format(
+            character_name=self.character['name'],
+            role_and_background=self.character['role_and_background'],
+            turning_points_list=turning_points_str
         )
+        
         self.has_unsaved_changes = True
 
         try:
-            print("📤 [API] Wysyłanie promptu startowego (ze streamowaniem)...")
+            print("📤 [API] Wysyłanie promptu startowego z mapą fabuły (ze streamowaniem)...")
             response_stream = self.gemini_chat.send_message_stream(intro_prompt)
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono pobieranie wprowadzenia.")
@@ -518,6 +512,10 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
         if not self.gemini_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
+
+        # --- ZWIĘKSZENIE TURY I RESET BLOKADY RZUTU ---
+        self.game_state["tura"] = self.game_state.get("tura", 0) + 1
+        self.game_state["rzut_wykonany"] = False  # <--- TUTAJ ODBLOKOWUJEMY RZUT W NOWEJ TURZE
 
         skutki = process_turn(self.game_state, self.turning_points)
         self.update_turning_points_ui()
