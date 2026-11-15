@@ -72,9 +72,9 @@ def classify_api_error(error: Exception) -> str:
 class HybridGMRoleplayChatApp(RoleplayChatApp):
     """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
 
-    def __init__(self, root, character, save_data=None):
+    def __init__(self, root, character, save_data=None, player_character=None):
         # Inicjalizacja klasycznego okna z interfejsu
-        super().__init__(root, character)
+        super().__init__(root, character, player_character=player_character)
         # Styl komunikatów o błędach: czerwony
         self.chat_display.tag_config("error_tag", foreground="#dc3545", font=("Arial", 10, "bold"))
 
@@ -172,6 +172,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         if success:
             # Podmieniamy stan bieżącej sesji na wczytany
             self.character = data["character"]
+            if "player_character" in data:
+                self.player_character = data["player_character"]
+            self.render_character_cards()
             self.system_instruction = data["system_instruction"]
             self.clean_chat_history = data["chat_history"]
             raw_tps = data.get("turning_points", [])
@@ -537,10 +540,10 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
             self.handle_gemini_error(e)
 
-# --- Zmodyfikowana funkcja startowa uruchamiająca nową klasę z API ---
-def start_chat_app_with_hybrid_gm(selected_character):
+# --- Zmodyfikowana funkcja startowa obsługująca dane gracza i towarzysza ---
+def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
     chat_root = tk.Tk()
-    HybridGMRoleplayChatApp(chat_root, selected_character)
+    HybridGMRoleplayChatApp(chat_root, selected_character, player_character=player_character)
     chat_root.mainloop()
 
 
