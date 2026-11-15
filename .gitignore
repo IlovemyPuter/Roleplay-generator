@@ -109,3 +109,6 @@ savegame/
 !/Projekt RPG/characters/Adela_Kruk.json
 !/Projekt RPG/characters/Feliks_Iskra.json
 !/Projekt RPG/characters/Jagoda_Żuraw.json
+.continue/
+context_generator.py
+llm_context_for_rpg.md

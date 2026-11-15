@@ -1,3 +1,10 @@
+import json
+import math
+import random
+import re
+
+from pydantic import ValidationError
+
 from config import CHAT_TEMPERATURE, load_config
 
 from google import genai
@@ -17,6 +24,7 @@ from turn_processing import process_turn
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
+
 settings = load_config()
 model = settings.model
 
@@ -27,12 +35,46 @@ if settings.api_key:
     except Exception as e:
         print(f"Błąd inicjalizacji klienta Gemini: {e}")
 
+# --- OBSŁUGA BŁĘDÓW API ---------------------------------------
+def format_retry_time(error_str: str) -> str:
+    """Wyciąga z komunikatu błędu 429 czas oczekiwania, np. '17s' lub '16h56m40s'."""
+    match = (
+        re.search(r"retry in\s+(\d[0-9hms.]*)", error_str, re.IGNORECASE)
+        or re.search(r"retryDelay\W+(\d[0-9hms.]*)", error_str)
+    )
+    if not match:
+        return "nieznany czas"
+    value = match.group(1).rstrip(".")
+    only_seconds = re.fullmatch(r"(\d+(?:\.\d+)?)s", value)
+    if only_seconds:
+        return f"{math.ceil(float(only_seconds.group(1)))}s"
+    return value or "nieznany czas"
+
+
+def classify_api_error(error: Exception) -> str:
+    """Zwraca rodzaj błędu: limit, json, klucz, przeciazenie, timeout albo inny."""
+    text = str(error)
+    upper = text.upper()
+    if re.search(r"\b429\b", text) or "RESOURCE_EXHAUSTED" in upper:
+        return "limit"
+    if isinstance(error, (json.JSONDecodeError, ValidationError)) or "JSON" in upper or "ZARYS" in upper:
+        return "json"
+    if re.search(r"\b400\b", text) or "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper:
+        return "klucz"
+    if re.search(r"\b503\b", text) or "UNAVAILABLE" in upper:
+        return "przeciazenie"
+    if re.search(r"\b504\b", text) or "DEADLINE_EXCEEDED" in upper or "TIMEOUT" in upper or "TIMED OUT" in upper:
+        return "timeout"
+    return "inny"
+
 class HybridGMRoleplayChatApp(RoleplayChatApp):
     """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
 
     def __init__(self, root, character, save_data=None):
         # Inicjalizacja klasycznego okna z interfejsu
         super().__init__(root, character)
+        # Styl komunikatów o błędach: czerwony
+        self.chat_display.tag_config("error_tag", foreground="#dc3545", font=("Arial", 10, "bold"))
 
         self.has_unsaved_changes = False
 
@@ -43,6 +85,10 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         # Podpięcie akcji pod przycisk powrotu zdefiniowany w interfejsie
         if hasattr(self, 'back_btn'):
             self.back_btn.config(command=self.handle_back)
+
+        # Podpięcie rzutu kością pod przycisk zdefiniowany w interfejsie
+        if hasattr(self, 'roll_button'):
+            self.roll_button.config(command=self.handle_roll)
 
         if save_data:
             # TRYB WCZYTANIA: Odtwarzamy stan z pliku JSON
@@ -114,7 +160,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
     def restore_loaded_session(self):
         """Odtwarza widok czatu oraz sesję Gemini z wczytanej historii."""
         if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "system_tag")
+            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "error_tag")
             return
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
@@ -167,7 +213,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.append_message("System", f"💾 Gra została pomyślnie zapisana do pliku: {result}", "system_tag")
         else:
             if result != "Anulowano zapis.":
-                self.append_message("System", f"❌ Błąd podczas zapisu gry: {result}", "system_tag")
+                self.append_message("System", f"❌ Błąd podczas zapisu gry: {result}", "error_tag")
 
     def handle_back(self):
         """Obsługa przycisku powrotu (tak jak handle_save czy handle_load_in_game)."""
@@ -227,6 +273,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             print("✅ [API] Wygenerowano 5 punktów zwrotnych.")
         except Exception as e:
             print(f"⚠️ [API] Błąd generowania punktów zwrotnych: {e}")
+            self.handle_gemini_error(e)
+            self.show_system_error("Przygoda rusza bez punktów zwrotnych. Możesz grać dalej albo wrócić do menu i spróbować ponownie.")
             self.turning_points = []
             self.update_turning_points_ui()
 
@@ -284,52 +332,97 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
 
         except Exception as e:
             print(f"❌ [API] Błąd tworzenia sesji: {e}")
-            self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "system_tag")
+            self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "error_tag")
             self.gemini_chat = None
 
+    def append_message(self, sender: str, message: str, tag_name: str):
+        if tag_name != "error_tag":
+            super().append_message(sender, message, tag_name)
+            return
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.insert(tk.END, f"{sender}: {message}\n\n", "error_tag")
+        self.chat_display.config(state=tk.DISABLED)
+        self.chat_display.see(tk.END)
+
+    def _start_on_new_line(self):
+        """Gdy przerwano strumień w pół zdania, kończy linię, żeby błąd nie dokleił się do tekstu."""
+        self.chat_display.config(state=tk.NORMAL)
+        last_char = self.chat_display.get("end-2c", "end-1c")
+        if last_char not in ("", "\n"):
+            self.chat_display.insert(tk.END, "\n\n")
+        self.chat_display.config(state=tk.DISABLED)
+
+    def show_system_error(self, message: str):
+        """Pokazuje graczowi komunikat systemowy w oknie czatu."""
+        self._start_on_new_line()
+        self.append_message("System", message, "error_tag")
+
     def handle_gemini_error(self, e):
-        """Uniwersalna metoda do parsowania i wyświetlania błędów API (429, 503 i inne)."""
+        """Zamienia błąd API (limit, zły JSON, klucz, przeciążenie, timeout) na czytelny komunikat w oknie gry."""
+        # Jeśli błąd niesie własny tekst dla gracza, pokazujemy go bez zmian.
+        user_message = getattr(e, "user_message", None)
+        if isinstance(user_message, str) and user_message.strip():
+            self.show_system_error(user_message.strip())
+            return
+
         error_str = str(e)
+        kind = classify_api_error(e)
 
-        # Obsługa błędów niepoprawnego klucza API (400 INVALID_ARGUMENT)
-        if "400" in error_str or "API_KEY_INVALID" in error_str or "API key not valid" in error_str:
+        if kind == "limit":
             error_msg = (
-                "❌ **Niepoprawny klucz API (Błąd 400)**\n"
+                "⏳ Wyczerpano limit zapytań do API (błąd 429)\n"
+                f"• Limit odnowi się za: {format_retry_time(error_str)}\n"
+                "• Gra nie została przerwana. Możesz ją zapisać (F5) i wrócić do niej później.\n\n"
+                "🛠️ Jak obejść ten problem?\n"
+                "1. Płatny plan: w Google AI Studio przejdź na plan Pay-as-you-go.\n"
+                "2. Inne konto: wygeneruj klucz API na innym koncie Google i podmień go w aplikacji.\n"
+                "3. Inny model: zmień model na taki, który ma osobną pulę zapytań."
+            )
+        elif kind == "json":
+            details = error_str.strip().replace("\n", " ")
+            if len(details) > 200:
+                details = details[:200] + "…"
+            error_msg = (
+                "⚠️ Model zwrócił odpowiedź w niepoprawnym formacie (błąd JSON)\n"
+                "• Aplikacja ponowiła zapytanie kilka razy, ale odpowiedź nadal była niepoprawna.\n"
+                f"• Szczegóły: {details}\n\n"
+                "🛠️ Spróbuj ponownie za chwilę. Gra nie została przerwana."
+            )
+        elif kind == "klucz":
+            error_msg = (
+                "❌ Niepoprawny klucz API (błąd 400)\n"
                 "• Podany klucz API jest nieważny lub został błędnie wpisany.\n\n"
-                "🛠️ **Jak to naprawić?**\n"
-                "1. Wejdź na stronę **Google AI Studio** (aistudio.google.com).\n"
+                "🛠️ Jak to naprawić?\n"
+                "1. Wejdź na stronę Google AI Studio (aistudio.google.com).\n"
                 "2. Wygeneruj nowy klucz API.\n"
-                "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową (`$env:GEMINI_API_KEY=\"TWÓJ_KLUCZ\"`) lub podaj go bezpośrednio w kodzie: `client = genai.Client(api_key=\"TWÓJ_KLUCZ\")`."
+                "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową GEMINI_API_KEY."
             )
-        elif "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-            # Próbujemy wyciągnąć czas oczekiwania z komunikatu błędu
-            retry_time_info = "nieznany czas"
-            if "Please retry in" in error_str:
-                try:
-                    # Wyciąganie fragmentu tekstu po "Please retry in "
-                    parts = error_str.split("Please retry in ")
-                    if len(parts) > 1:
-                        retry_time_info = parts[1].split(".")[0] # np. "16h56m40s" lub podobnie
-                except Exception:
-                    pass
-
-            error_msg = (
-                "⏳ **Wyczerpano darmowy dzienny limit zapytań (Błąd 429)**\n"
-                f"• Pozostały czas do odnowienia limitu: **{retry_time_info}**\n\n"
-                "🛠️ **Jak obejść ten problem?**\n"
-                "1. **Płatny plan:** Przejdź w Google AI Studio na plan *Pay-as-you-go* (płacisz tylko za zużycie, co usuwa sztywne dzienne limity darmowego konta).\n"
-                "2. **Inne konto:** Zaloguj się w Google AI Studio na inne konto Google, wygeneruj nowy klucz API i podmień go w aplikacji.\n"
-                "3. **Inny model:** Zmień model w kodzie na taki, który ma osobną pulę darmowych zapytań (jeśli jest dostępny)."
-            )
-        elif "503" in error_str or "UNAVAILABLE" in error_str:
+        elif kind == "przeciazenie":
             error_msg = (
                 "⚠️ Model Gemini jest obecnie mocno obciążony (błąd 503). "
                 "To chwilowy problem po stronie Google. Spróbuj wysłać wiadomość ponownie za kilka sekund."
             )
+        elif kind == "timeout":
+            error_msg = (
+                "⚠️ Model nie odpowiedział w oczekiwanym czasie. "
+                "Sprawdź połączenie z internetem i spróbuj wysłać wiadomość ponownie."
+            )
         else:
             error_msg = f"Wystąpił błąd podczas komunikacji z API: {e}"
-            
-        self.append_message("System", error_msg, "system_tag")
+
+        self.show_system_error(error_msg)
+
+    def discard_empty_stream_message(self):
+        """Usuwa pusty nagłówek 'Mistrz Gry & Świat: ', gdy model nic nie zwrócił."""
+        self.chat_display.config(state=tk.NORMAL)
+        self.chat_display.delete(f"{self._stream_start_index} linestart", tk.END)
+        self.chat_display.config(state=tk.DISABLED)
+
+    def handle_roll(self):
+        """Rzut k20: zapisuje wynik (liczba całkowita 1-20) w stanie gry pod kluczem ostatni_rzut."""
+        self.game_state["ostatni_rzut"] = random.randint(1, 20)
+        self.has_unsaved_changes = True
+        self.update_turning_points_ui()  # odświeża etykietę "Ostatni rzut: N"
 
     def stream_and_parse_response(self, response_stream):
         """Na bieżąco analizuje strumień i rozdziela tekst na GM i Towarzysza."""
@@ -372,7 +465,14 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
                     self.update_streaming_message(comp_text)
 
                 self.root.update()  # Odświeżanie interfejsu w locie
-
+        # Model nic nie zwrócił (pusta odpowiedź, np. zablokowana przez filtry) 
+        if not full_text.strip():
+            self.discard_empty_stream_message()
+            self.show_system_error(
+                "⚠️ Model nie zwrócił żadnej odpowiedzi (mogła zostać zablokowana lub przerwana). "
+                "Spróbuj wysłać wiadomość ponownie albo sformułować ją inaczej."
+            )
+            return
         # Zakończenie strumienia (gdyby model nie podał znacznika)
         if not gm_finalized:
             gm_text = full_text.strip()
@@ -391,7 +491,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
     def start_adventure(self):
         """Wysyła ukryty prompt startowy zakorzeniony w realiach postaci."""
         if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
         intro_prompt = (
@@ -416,7 +516,7 @@ Zawsze kończ wpis sytuacją wymagającą reakcji gracza.
     def simulate_llm_response(self, prompt: str):
         """Wysyła zapytanie gracza i odbiera odpowiedź strumieniowo z podziałem."""
         if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "system_tag")
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
         skutki = process_turn(self.game_state, self.turning_points)
