@@ -23,6 +23,9 @@ from turning_point import TurningPoint
 from generate_plot import generate_plot
 from turn_processing import process_turn
 
+# Importujemy funkcje przetwarzania tur i etapów z pliku turn_processing.py
+from turn_processing import process_turn, update_game_stage
+
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
