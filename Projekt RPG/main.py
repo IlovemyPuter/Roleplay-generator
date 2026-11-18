@@ -6,7 +6,7 @@ import re
 from pydantic import ValidationError
 from error_handler import build_user_error_message
 
-from config import CHAT_TEMPERATURE, load_config
+from config import SAVE_DIR, CHAT_TEMPERATURE, load_config
 
 from google import genai
 from google.genai import types
@@ -716,14 +716,33 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 active_tp = tp
                 break
 
+        directive_text = ""
+        current_rzut = self.game_state.get("ostatni_rzut")
+
         if active_tp:
-            directive_text = (
-                f"\n[INSTRUKCJA REŻYSERSKA DLA GM: Twój aktualny i JEDYNY cel do zrealizowania w tej turze "
-                f"to Punkt #{active_tp.id} - \"{active_tp.title}\": {active_tp.description}. "
-                f"Efekt do osiągnięcia: {active_tp.effect}. Skup się wyłącznie na nim. "
-                f"⚠️ WAŻNE: Jeśli fabuła w tej turze zrealizowała ten cel, MUSISZ obowiązkowo umieścić na samym końcu swojej odpowiedzi znacznik [PUNKT_ZALICZONY: {active_tp.id}], "
-                f"w przeciwnym razie punkt pozostanie otwarty. Nie próbuj zaliczać kolejnych punktów na zapas.]"
-            )
+            cond = active_tp.condition
+            cond_type = cond.get("type") if isinstance(cond, dict) else getattr(cond, "type", None)
+            cond_val = cond.get("value") if isinstance(cond, dict) else getattr(cond, "value", None)
+
+            if cond_type == "rzut" and current_rzut is not None:
+                if current_rzut < cond_val:
+                    # RZUT NIE POWIODŁ SIĘ - WYMAGAMY POWAŻNYCH KONSEKWENCJI
+                    directive_text = (
+                        f"\n[⚠️ KRYTYCZNA INSTRUKCJA DLA GM - NIEUDANY RZUT]: Gracz wykonał rzut kością i uzyskał wynik {current_rzut}, co jest WYNIKIEM NIEWYSTARCZAJĄCYM do zaliczenia punktu #{active_tp.id} - \"{active_tp.title}\" (wymagano min. {cond_val}). "
+                        f"Rzut zakończył się niepowodzeniem! MUSISZ BEZWZGLĘDNIE natychmiast opisać w świecie gry poważne, negatywne konsekwencje tej porażki "
+                        f"(np. fizyczne obrażenia postaci, utrata cennego ekwipunku, wpadnięcie w zasadzkę, zniszczenie osłony lub drastyczne pogorszenie sytuacji taktycznej). "
+                        f"Sytuacja musi stać się o wiele trudniejsza dla gracza."
+                    )
+                else:
+                    directive_text = (
+                        f"\n[INSTRUKCJA REŻYSERSKA DLA GM: Punkt #{active_tp.id} - \"{active_tp.title}\" został pomyślnie zweryfikowany rzutem ({current_rzut} >= {cond_val}). "
+                        f"Możesz bezpiecznie domknąć ten etap.]"
+                    )
+            elif cond_type == "tura":
+                directive_text = (
+                    f"\n[INSTRUKCJA REŻYSERSKA DLA GM: Twój aktualny cel to Punkt #{active_tp.id} - \"{active_tp.title}\": {active_tp.description}. "
+                    f"Efekt do osiągnięcia: {active_tp.effect}.]"
+                )
         else:
             directive_text = "\n[INSTRUKCJA REŻYSERSKA DLA GM: Wszystkie główne punkty zwrotne zostały zrealizowane. Prowadź otwartą fabułę.]"
 
@@ -873,7 +892,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 "game_state": self.game_state
             }
             
-            target_file = getattr(self, 'current_save_path', "autosave.json")
+            target_file = getattr(self, 'current_save_path', SAVE_DIR / "autosave.json")
             with open(target_file, "w", encoding="utf-8") as f:
                 json.dump(game_data, f, ensure_ascii=False, indent=4)
                 
@@ -947,15 +966,22 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                         print(f"⚠️ [TURN-BLOCK] GM próbował przedwcześnie zaliczyć punkt #{active_tp.id} tagiem, ale tura jest za niska ({current_tura}/{cond_val}). Odrzucono.")
 
             elif cond_type == "rzut":
-                # ZASADA DLA RZUTÓW: Wymagany jest FIZYCZNY RZUT gracza >= wartości.
-                if current_rzut is not None and current_rzut >= cond_val:
-                    is_ready = True
-                    print(f"🎲 [DICE-GO] Punkt #{active_tp.id} ('{active_tp.title}') zaliczony przez rzut ({current_rzut} >= {cond_val}).")
+                # ZASADA DLA RZUTÓW: Wymagany jest fizyczny rzut gracza. Sukces zalicza etap, porażka uruchamia konsekwencje.
+                if current_rzut is not None:
+                    if current_rzut >= cond_val:
+                        is_ready = True
+                        print(f"🎲 [DICE-GO] Sukces! Punkt #{active_tp.id} ('{active_tp.title}') zaliczony przez rzut ({current_rzut} >= {cond_val}).")
+                    else:
+                        # RZUT ZA NISKI -> PORAŻKA I KONSEKWENCJE!
+                        print(f"❌ [DICE-FAIL] Porażka rzutu ({current_rzut} < {cond_val}) dla punktu #{active_tp.id}. Konsumujemy rzut – GM opisuje negatywne konsekwencje.")
+                        self.game_state["ostatni_rzut"] = None
+                        self.game_state["rzut_wykonany"] = False
+                        self.has_unsaved_changes = True
                 else:
                     if active_tp.id in completed_ids:
-                        print(f"⚠️ [DICE-BLOCK] GM chciał zaliczyć punkt #{active_tp.id} (wymaga rzutu {cond_val}), ale brak rzutu (ostatni: {current_rzut}). Odrzucono.")
+                        print(f"⚠️ [DICE-BLOCK] GM chciał zaliczyć punkt #{active_tp.id} (wymaga rzutu {cond_val}), ale brak rzutu. Odrzucono.")
 
-            # Wykonanie przejścia, jeśli spełniono kryteria
+            # Wykonanie przejścia (zamknięcie etapu), jeśli spełniono kryteria sukcesu
             if is_ready:
                 active_tp.status = "wykonany"
                 self.has_unsaved_changes = True
@@ -963,7 +989,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 # Resetujemy licznik tur po każdym zamkniętym etapie do 0
                 self.game_state["tura"] = 0
                 
-                # Jeśli to był punkt z rzutem, czyszczymy rzut dla kolejnego etapu
+                # Czyszczymy rzut dla kolejnego etapu
                 if cond_type == "rzut":
                     self.game_state["ostatni_rzut"] = None
                     self.game_state["rzut_wykonany"] = False
