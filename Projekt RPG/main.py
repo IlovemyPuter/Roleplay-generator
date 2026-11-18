@@ -21,7 +21,7 @@ from interface import CharacterSelectWindow, RoleplayChatApp
 # Import modelu TurningPoint:
 from turning_point import TurningPoint
 from generate_plot import generate_plot
-from turn_processing import process_turn
+from turn_processing import process_turn, update_game_stage
 
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
@@ -121,7 +121,6 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.root.after(100, self.init_gemini_chat)
 
     def update_turning_points_ui(self):
-        
         # Dynamiczne włączanie/wyłączanie przycisku rzutu w zależności od punktów zwrotnych
         if hasattr(self, 'roll_button') and self.roll_button:
             if self.is_roll_allowed() and not self.game_state.get("rzut_wykonany", False):
@@ -138,49 +137,62 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.state_label.config(text=f"{etap} | Tura {tura} | Ostatni rzut: {rzut_str}")
 
         if hasattr(self, 'points_container') and self.points_container:
-            # Czyszczenie starych kart
+            # Czyszczenie starych kart w kontenerze
             for widget in self.points_container.winfo_children():
                 widget.destroy()
 
-            # Generowanie nowej karty dla każdego punktu zwrotnego
-            for tp in self.turning_points:
-                status_color = "#198754" if tp.status == "oczekujacy" else "#6c757d"
-                status_text = "Oczekujący" if tp.status == "oczekujacy" else "Wykonany"
+            # Filtrujemy listę – zostawiamy tylko te, które mają status "wykonany"
+            wykonane_punkty = [tp for tp in self.turning_points if tp.status == "wykonany"]
 
-                # Ramka pojedynczego punktu zwrotnego (kafelek)
-                card = ttk.LabelFrame(self.points_container, padding=8)
-                card.pack(fill=tk.X, padx=5, pady=5)
-
-                # 1. Tytuł (mniejsza czcionka)
-                title_label = tk.Label(
-                    card,
-                    text=f"#{tp.id}: {tp.title}",
-                    font=("Arial", 9, "bold"),
-                    fg="#333333",
-                    anchor="w"
+            # Jeśli żaden punkt nie został jeszcze zaliczony, wyświetlamy informację
+            if not wykonane_punkty:
+                info_label = ttk.Label(
+                    self.points_container,
+                    text="Żaden punkt zwrotny nie został osiągnięty.",
+                    font=("Arial", 10, "italic"),
+                    justify="center"
                 )
-                title_label.pack(anchor="w", fill=tk.X)
+                info_label.pack(padx=15, pady=30, anchor="center")
+            else:
+                # Generowanie nowej karty tylko dla wykonanych punktów zwrotnych
+                for tp in wykonane_punkty:
+                    status_color = "#6c757d"
+                    status_text = "Wykonany"
 
-                # 2. Opis (WIĘKSZA czcionka niż tytuł + automatyczne zawijanie wierszy)
-                desc_label = tk.Label(
-                    card,
-                    text=tp.description,
-                    font=("Arial", 11),  # Większa czcionka zgodnie z wymaganiem
-                    fg="#111111",
-                    justify=tk.LEFT,
-                    wraplength=280  # Szerokość zawijania tekstu dopasowana do panelu
-                )
-                desc_label.pack(anchor="w", fill=tk.X, pady=(4, 4))
+                    # Ramka pojedynczego punktu zwrotnego (kafelek)
+                    card = ttk.LabelFrame(self.points_container, padding=8)
+                    card.pack(fill=tk.X, padx=5, pady=5)
 
-                # 3. Status punktu
-                status_label = tk.Label(
-                    card,
-                    text=f"Stan: {status_text}",
-                    font=("Arial", 8, "italic"),
-                    fg=status_color,
-                    anchor="e"
-                )
-                status_label.pack(anchor="e")
+                    # 1. Tytuł (mniejsza czcionka)
+                    title_label = tk.Label(
+                        card,
+                        text=f"#{tp.id}: {tp.title}",
+                        font=("Arial", 9, "bold"),
+                        fg="#333333",
+                        anchor="w"
+                    )
+                    title_label.pack(anchor="w", fill=tk.X)
+
+                    # 2. Opis (WIĘKSZA czcionka niż tytuł + automatyczne zawijanie wierszy)
+                    desc_label = tk.Label(
+                        card,
+                        text=tp.description,
+                        font=("Arial", 11),  # Większa czcionka zgodnie z wymaganiem
+                        fg="#111111",
+                        justify=tk.LEFT,
+                        wraplength=280  # Szerokość zawijania tekstu dopasowana do panelu
+                    )
+                    desc_label.pack(anchor="w", fill=tk.X, pady=(4, 4))
+
+                    # 3. Status punktu
+                    status_label = tk.Label(
+                        card,
+                        text=f"Stan: {status_text}",
+                        font=("Arial", 8, "italic"),
+                        fg=status_color,
+                        anchor="e"
+                    )
+                    status_label.pack(anchor="e")
 
     def handle_load_in_game(self):
         """Obsługa wczytywania gry z poziomu aktywnego czatu (przycisk lub F8)."""
@@ -331,6 +343,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
 
         # Generowanie 5 punktów zwrotnych na początku nowej przygody
+        generated_successfully = True
         try:
             setting = self.character['role_and_background']
             plot_outline = generate_plot(setting=setting, characters=[self.character], model=model, client=client)
@@ -339,21 +352,35 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             print("✅ [API] Wygenerowano 5 punktów zwrotnych.")
         except Exception as e:
             print(f"⚠️ [API] Błąd generowania punktów zwrotnych: {e}")
-            self.handle_gemini_error(e)
-            self.show_system_error("Przygoda rusza bez punktów zwrotnych. Możesz grać dalej albo wrócić do menu i spróbować ponownie.")
+            generated_successfully = False
             self.turning_points = []
-            self.update_turning_points_ui()
 
-        # Wczytanie instrukcji systemowej Mistrza Gry z pliku z folderu prompts/
+        # Jeśli wystąpił błąd lub lista punktów jest pusta, pytamy użytkownika co zrobić
+        if not generated_successfully or not self.turning_points:
+            from tkinter import messagebox
+            answer = messagebox.askyesno(
+                "Błąd generowania fabuły",
+                "Nie udało się wygenerować punktów zwrotnych dla nowej przygody (błąd API lub brak odpowiedzi).\n\n"
+                "Czy chcesz kontynuować grę bez punktów zwrotnych?\n"
+                "(Wybierz 'Nie', aby wrócić do menu i spróbować ponownie)",
+                parent=self.root
+            )
+
+            if not answer:  # Wybrano "Nie" -> wracamy do menu
+                self.return_to_menu()
+                return
+            else:  # Wybrano "Tak" -> gramy dalej bez punktów zwrotnych
+                self.update_turning_points_ui()
+
+        # Dalsza część inicjalizacji czatu...
         from config import GAME_MASTER_SYSTEM_INSTRUCTION_PATH
         try:
             template_text = GAME_MASTER_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
         except Exception as e:
-            print(f"⚠️ [API] Nie udało się wczyta pliku promptu GM: {e}")
+            print(f"⚠️ [API] Nie udało się wczytać pliku promptu GM: {e}")
             template_text = "Jesteś Mistrzem Gry i towarzyszem {character_name}."
 
         char = self.character
-        # Podstawienie danych postaci do szablonu promptu
         self.system_instruction = template_text.format(
             character_name=char['name'],
             role_and_background=char['role_and_background'],
@@ -364,7 +391,6 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         )
 
         try:
-            # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
             self.gemini_chat = client.chats.create(
                 model=model,
                 config=types.GenerateContentConfig(
@@ -373,8 +399,6 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 )
             )
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
-
-            # Automatycznie generujemy początek przygody od razu po starcie czatu
             self.start_adventure()
 
         except Exception as e:
@@ -528,19 +552,23 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             if comp_text:
                 self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
 
-    def start_adventure(self):
-        """Wysyła ukryty prompt startowy zawierający pełną listę punktów zwrotnych."""
+    def start_adventure(self, attempt: int = 1):
+        """Wysyła ukryty prompt startowy z mechanizmem automatycznego ponawiania do 3 razy i czyszczeniem pamięci w razie błędu."""
         if not self.gemini_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
-        # Przygotowanie czytelnej listy 5 punktów zwrotnych dla Mistrza Gry
-        tp_descriptions = []
+        # Szukamy TYLKO PIERWSZEGO punktu o statusie "oczekujacy"
+        active_tp = None
         for tp in self.turning_points:
-            tp_descriptions.append(
-                f"- Punkt {tp.id} [{tp.title}]: {tp.description} (Efekt: {tp.effect})"
-            )
-        turning_points_str = "\n".join(tp_descriptions) if tp_descriptions else "Brak zaplanowanych punktów zwrotnych."
+            if tp.status == "oczekujacy":
+                active_tp = tp
+                break
+
+        if active_tp:
+            tp_desc = f"Bieżący cel reżyserski (Punkt #{active_tp.id} - {active_tp.title}): {active_tp.description} (Oczekiwany efekt: {active_tp.effect})"
+        else:
+            tp_desc = "Brak aktywnych punktów zwrotnych."
 
         # Wczytanie szablonu promptu startowego z pliku Markdown
         from config import START_ADVENTURE_PROMPT_PATH
@@ -549,59 +577,73 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         except Exception as e:
             print(f"⚠️ [API] Nie udało się wczytać pliku promptu startowego: {e}")
             template_text = (
-                "Rozpocznij sesję RPG na podstawie tła: \"{role_and_background}\". "
-                "Oto punkty zwrotne:\n{turning_points_list}\n"
+                "Rozpocznij sesję RPG na podstawie tła: \"{role_and_background}\".\n"
+                "Oto twój JEDYNY obecny cel reżyserski (nie znasz kolejnych):\n{turning_points_list}\n"
                 "Napisz wprowadzenie i dodaj [TOWARZYSZ]: dla {character_name}."
             )
 
-        # Uzupełnienie szablonu danymi postaci oraz punktami zwrotnymi
+        # Uzupełnienie szablonu danymi postaci oraz TYLKO AKTUALNYM punktem
         intro_prompt = template_text.format(
             character_name=self.character['name'],
             role_and_background=self.character['role_and_background'],
-            turning_points_list=turning_points_str
+            turning_points_list=tp_desc
         )
         
         self.has_unsaved_changes = True
 
         try:
-            print("📤 [API] Wysyłanie promptu startowego z mapą fabuły (ze streamowaniem)...")
+            print(f"📤 [API] Wysyłanie promptu startowego (próba {attempt}/3)...")
             response_stream = self.gemini_chat.send_message_stream(intro_prompt)
-            self.stream_and_parse_response(response_stream)
-            print("✅ [API] Zakończono pobieranie wprowadzenia.")
-        except Exception as e:
-            print(f"❌ [API] Błąd podczas generowania wprowadzenia: {e}")
-            self.handle_gemini_error(e)
-
-    def simulate_llm_response(self, prompt: str):
-        """Wysyła zapytanie gracza i odbiera odpowiedź strumieniowo z podziałem."""
-        if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
-            return
-
-        try:
-            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
             
-            # 1. Inicjalizujemy strumień zapytań
-            response_stream = self.gemini_chat.send_message_stream(prompt)
-            
-            # 2. Próbujemy sparsować i odebrać odpowiedź
-            # Jeśli po drodze wystąpi błąd API lub zerwanie, zostanie rzucony wyjątek
-            success = self.safe_stream_and_parse(response_stream, prompt)
+            # Bezpieczny odbiorca strumienia wprowadzenia
+            success = self.safe_stream_and_parse_intro(response_stream)
             
             if not success:
-                # Jeśli funkcja zwróciła False (np. pusta odpowiedź od modelu), 
-                # przerywamy i NIE zwiększamy tury!
-                return
+                raise Exception("Model zwrócił pustą lub pręwaną odpowiedź wprowadzenia.")
 
-            print("✅ [API] Zakończono pomyślnie turę i odbieranie odpowiedzi.")
+            print("✅ [API] Zakończono pobieranie wprowadzenia.")
 
         except Exception as e:
-            # W przypadku jakiegokolwiek błędu sieciowego/API tura NIE jest ruszana
-            print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
-            self.handle_gemini_error(e)
+            print(f"❌ [API] Błąd podczas generowania wprowadzenia (próba {attempt}): {e}")
+
+            # --- BEZPAMIĘCIOWY RESET W RAZIE BŁĘDU ---
+            self.clean_chat_history = []
             
-    def safe_stream_and_parse(self, response_stream, prompt: str) -> bool:
-        """Odbiera strumień i dopiero po sukcesie zalicza turę i zapisuje stan."""
+            try:
+                self.discard_empty_stream_message()
+            except Exception:
+                pass
+
+            try:
+                self.gemini_chat = client.chats.create(
+                    model=model,
+                    config=types.GenerateContentConfig(
+                        system_instruction=self.system_instruction,
+                        temperature=CHAT_TEMPERATURE,
+                    )
+                )
+                print("🔄 [API] Zresetowano sesję czatu (wyczyszczono pamięć kontekstu).")
+            except Exception as chat_err:
+                print(f"❌ [API] Błąd tworzenia nowej sesji po resecie: {chat_err}")
+
+            # Obsługa limitu 3 prób
+            if attempt < 3:
+                print(f"⏳ [API] Automatyczne ponawianie próby startu ({attempt + 1}/3)...")
+                self.start_adventure(attempt=attempt + 1)
+            else:
+                from tkinter import messagebox
+                retry = messagebox.askyesno(
+                    "Błąd inicjalizacji przygody",
+                    f"Nie udało się wygenerować wprowadzenia po 3 próbach.\nOstatni błąd: {e}\n\nCzy chcesz spróbować ponownie?",
+                    parent=self.root
+                )
+                if retry:
+                    self.start_adventure(attempt=1)
+                else:
+                    self.show_system_error("⚠️ Inicjalizacja przygody została przerwana przez użytkownika.")
+
+    def safe_stream_and_parse_intro(self, response_stream) -> bool:
+        """Bezpiecznie przetwarza strumień wprowadzenia i zwraca True w przypadku sukcesu."""
         full_text = ""
         gm_finalized = False
 
@@ -620,7 +662,150 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                         self.update_streaming_message(gm_text)
                         self.finish_streaming_message()
                         if gm_text:
-                            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+                            cleaned_gm = self._extract_and_register_npcs(gm_text)
+                            cleaned_gm = self._extract_and_complete_turning_points(cleaned_gm)
+                            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": cleaned_gm})
+
+                        companion_name = self.character['name']
+                        self.start_streaming_message(companion_name, "companion_tag")
+                        self.update_streaming_message(comp_text)
+                        gm_finalized = True
+                    else:
+                        self.update_streaming_message(full_text)
+                else:
+                    parts = full_text.split("[TOWARZYSZ]:", 1)
+                    comp_text = parts[1].strip() if len(parts) > 1 else ""
+                    self.update_streaming_message(comp_text)
+
+                self.root.update()
+
+        if not full_text.strip():
+            self.discard_empty_stream_message()
+            return False
+
+        if not gm_finalized:
+            cleaned_gm = self._extract_and_register_npcs(full_text)
+            cleaned_gm = self._extract_and_complete_turning_points(cleaned_gm)
+            self.update_streaming_message(cleaned_gm)
+            self.finish_streaming_message()
+            if cleaned_gm:
+                self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": cleaned_gm})
+        else:
+            parts = full_text.split("[TOWARZYSZ]:", 1)
+            comp_raw = parts[1].strip() if len(parts) > 1 else ""
+            cleaned_comp = self._extract_and_register_npcs(comp_raw)
+            cleaned_comp = self._extract_and_complete_turning_points(cleaned_comp)
+            self.update_streaming_message(cleaned_comp)
+            self.finish_streaming_message()
+            companion_name = self.character['name']
+            if cleaned_comp:
+                self.clean_chat_history.append({"sender": companion_name, "text": cleaned_comp})
+
+        return True
+
+    def simulate_llm_response(self, prompt: str):
+        """Wysyła zapytanie gracza wraz z aktualnym celem reżyserskim do Gemini."""
+        if not self.gemini_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
+            return
+
+        # 1. Znajdujemy WYŁĄCZNIE PIERWSZY punkt o statusie "oczekujacy"
+        active_tp = None
+        for tp in self.turning_points:
+            if tp.status == "oczekujacy":
+                active_tp = tp
+                break
+
+        if active_tp:
+            directive_text = (
+                f"\n[INSTRUKCJA REŻYSERSKA DLA GM: Twój aktualny i JEDYNY cel do zrealizowania w tej turze "
+                f"to Punkt #{active_tp.id} - \"{active_tp.title}\": {active_tp.description}. "
+                f"Efekt do osiągnięcia: {active_tp.effect}. Skup się wyłącznie na nim. "
+                f"⚠️ WAŻNE: Jeśli fabuła w tej turze zrealizowała ten cel, MUSISZ obowiązkowo umieścić na samym końcu swojej odpowiedzi znacznik [PUNKT_ZALICZONY: {active_tp.id}], "
+                f"w przeciwnym razie punkt pozostanie otwarty. Nie próbuj zaliczać kolejnych punktów na zapas.]"
+            )
+        else:
+            directive_text = "\n[INSTRUKCJA REŻYSERSKA DLA GM: Wszystkie główne punkty zwrotne zostały zrealizowane. Prowadź otwartą fabułę.]"
+
+        full_prompt_for_ai = prompt + directive_text
+
+        # 2. Tymczasowo dodajemy wiadomość gracza do historii
+        self.clean_chat_history.append({"sender": "Me", "text": prompt})
+        self.has_unsaved_changes = True
+
+        try:
+            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (z aktywnym celem reżyserskim)...")
+            
+            response_stream = self.gemini_chat.send_message_stream(full_prompt_for_ai)
+            success = self.safe_stream_and_parse(response_stream, prompt)
+            
+            if not success:
+                # Jeśli safe_stream_and_parse zwróciło False, cofamy wpis gracza z historii
+                if self.clean_chat_history and self.clean_chat_history[-1]["sender"] == "Me":
+                    self.clean_chat_history.pop()
+                
+                # Pyta użytkownika o ponowne wysłanie
+                self.ask_to_resend(prompt)
+                return
+
+            print("✅ [API] Zakończono pomyślnie turę i odbieranie odpowiedzi.")
+
+        except Exception as e:
+            print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
+            
+            # 1. Usuwamy wpis gracza z historii, aby się nie zapisał
+            if self.clean_chat_history and self.clean_chat_history[-1]["sender"] == "Me":
+                self.clean_chat_history.pop()
+            
+            # 2. Czyszczymy ewentualne śmieci z niedokończonego strumienia w oknie czatu
+            try:
+                self.discard_empty_stream_message()
+            except Exception:
+                pass
+
+            self.handle_gemini_error(e)
+            
+            # 3. Pytamy użytkownika, czy chce wysłać wiadomość ponownie
+            self.ask_to_resend(prompt)
+
+    def ask_to_resend(self, prompt: str):
+        """Wyświetla okno dialogowe z zapytaniem o ponowne wysłanie wiadomości po błędzie."""
+        from tkinter import messagebox
+        retry = messagebox.askyesno(
+            "Błąd komunikacji z AI",
+            "Wystąpił błąd podczas komunikacji z modelem (np. przeciążenie serwera lub limit zapytań).\n\n"
+            "Twoja wiadomość oraz przerwana odpowiedź nie zostały zapisane w historii.\n\n"
+            "Czy chcesz wysłać wiadomość jeszcze raz?",
+            parent=self.root
+        )
+        if retry:
+            # Ponawiamy próbę wysłania tej samej wiadomości
+            self.simulate_llm_response(prompt)
+            
+    def safe_stream_and_parse(self, response_stream, prompt: str) -> bool:
+        """Odbiera strumień, parsuje odpowiedź GM-a i Towarzysza, a dopiero po sukcesie zalicza turę i zapisuje stan."""
+        full_text = ""
+        gm_finalized = False
+
+        self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
+
+        for chunk in response_stream:
+            if chunk.text:
+                full_text += chunk.text
+
+                if not gm_finalized:
+                    if "[TOWARZYSZ]:" in full_text:
+                        parts = full_text.split("[TOWARZYSZ]:", 1)
+                        gm_text = parts[0].strip()
+                        comp_text = parts[1].strip() if len(parts) > 1 else ""
+
+                        self.update_streaming_message(gm_text)
+                        self.finish_streaming_message()
+                        if gm_text:
+                            # Przetwarzamy tekst GM-a (wyciągamy NPC i zaliczone punkty zwrotne)
+                            cleaned_gm = self._extract_and_register_npcs(gm_text)
+                            cleaned_gm = self._extract_and_complete_turning_points(cleaned_gm)
+                            self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": cleaned_gm})
 
                         companion_name = self.character['name']
                         self.start_streaming_message(companion_name, "companion_tag")
@@ -644,37 +829,58 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             )
             return False  # Zwracamy False -> tura NIE wzrośnie!
 
-        # Finalizacja tekstu
+        # Finalizacja tekstu (jeśli nie było znacznika [TOWARZYSZ])
         if not gm_finalized:
-            gm_text = self._extract_and_register_npcs(full_text)
-            self.update_streaming_message(gm_text)
+            cleaned_gm = self._extract_and_register_npcs(full_text)
+            cleaned_gm = self._extract_and_complete_turning_points(cleaned_gm)
+            self.update_streaming_message(cleaned_gm)
             self.finish_streaming_message()
-            if gm_text:
-                self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": gm_text})
+            if cleaned_gm:
+                self.clean_chat_history.append({"sender": "Mistrz Gry & Świat", "text": cleaned_gm})
         else:
             parts = full_text.split("[TOWARZYSZ]:", 1)
             comp_raw = parts[1].strip() if len(parts) > 1 else ""
-            comp_text = self._extract_and_register_npcs(comp_raw)
-            self.update_streaming_message(comp_text)
+            cleaned_comp = self._extract_and_register_npcs(comp_raw)
+            cleaned_comp = self._extract_and_complete_turning_points(cleaned_comp)
+            self.update_streaming_message(cleaned_comp)
             self.finish_streaming_message()
             companion_name = self.character['name']
-            if comp_text:
-                self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
+            if cleaned_comp:
+                self.clean_chat_history.append({"sender": companion_name, "text": cleaned_comp})
 
-        # --- SUKCES! DOPIERO TERAZ ZWIĘKSZAMY TURĘ ---
+        # --- SUKCES! ZWIĘKSZAMY TURĘ I ROBIMY AUTOZAPIS ---
         self.game_state["tura"] = self.game_state.get("tura", 0) + 1
         self.game_state["rzut_wykonany"] = False
 
         skutki = process_turn(self.game_state, self.turning_points)
         if skutki:
             self.game_state["tura"] = 0  
-            prompt += "\n" + "\n".join(
-                f"[Punkt zwrotny] {skutek}" for skutek in skutki
-            )
+            if self.clean_chat_history and self.clean_chat_history[-1]["sender"] == "Me":
+                self.clean_chat_history[-1]["text"] += "\n" + "\n".join(
+                    f"[Punkt zwrotny] {skutek}" for skutek in skutki
+                )
 
         self.update_turning_points_ui()
-        self.clean_chat_history.append({"sender": "Me", "text": prompt})
-        self.has_unsaved_changes = True
+
+        # Bezpośredni autozapis w tle do pliku
+        try:
+            game_data = {
+                "character": self.character,
+                "player_character": self.player_character,
+                "system_instruction": self.system_instruction,
+                "chat_history": self.clean_chat_history,
+                "turning_points": [tp.model_dump() if hasattr(tp, "model_dump") else tp for tp in self.turning_points],
+                "game_state": self.game_state
+            }
+            
+            target_file = getattr(self, 'current_save_path', "autosave.json")
+            with open(target_file, "w", encoding="utf-8") as f:
+                json.dump(game_data, f, ensure_ascii=False, indent=4)
+                
+            self.has_unsaved_changes = False
+            print(f"💾 [AUTO-SAVE] Pomyślnie zaktualizowano plik w tle: {target_file}")
+        except Exception as e:
+            print(f"⚠️ [AUTO-SAVE] Błąd zapisu w tle: {e}")
 
         return True
             
@@ -700,6 +906,74 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 self.render_character_cards()
 
         # Usuwamy znaczniki techniczne z tekstu, który trafi do historii czatu
+        cleaned_text = re.sub(pattern, "", text).strip()
+        return cleaned_text
+
+    def _extract_and_complete_turning_points(self, text: str) -> str:
+        """Zaawansowana weryfikacja: tura to minimum czasowe, ale warunkiem koniecznym jest decyzja (tag) GM-a wynikająca z działań gracza."""
+        pattern = r"\[PUNKT_ZALICZONY:\s*(\d+)\]"
+        matches = re.findall(pattern, text)
+        completed_ids = {int(m) for m in matches}
+
+        current_tura = self.game_state.get("tura", 0)
+        current_rzut = self.game_state.get("ostatni_rzut")
+
+        # Pobieramy TYLKO PIERWSZY aktualnie oczekujący punkt (sekwencyjność)
+        active_tp = None
+        for tp in self.turning_points:
+            if tp.status == "oczekujacy":
+                active_tp = tp
+                break
+
+        if active_tp:
+            cond = active_tp.condition
+            cond_type = cond.get("type") if isinstance(cond, dict) else getattr(cond, "type", None)
+            cond_val = cond.get("value") if isinstance(cond, dict) else getattr(cond, "value", None)
+
+            is_ready = False
+
+            if cond_type == "tura":
+                # ZASADA DLA TUR (DUAL-GATE): 
+                # 1. Tura musi osiągnąć minimalny próg (np. minęły przynajmniej 3 tury).
+                # 2. ORAZ Mistrz Gry musi wydać jawny sygnał (tag), że akcja gracza doprowadziła do realizacji celu.
+                if current_tura >= cond_val:
+                    if active_tp.id in completed_ids:
+                        is_ready = True
+                        print(f"✨ [TURN-GO] Punkt #{active_tp.id} ('{active_tp.title}') zaliczony (Tura {current_tura}/{cond_val} + Decyzja GM).")
+                    else:
+                        print(f"⏳ [TURN-WAITING] Tura osiągnęła wymagany próg ({current_tura}/{cond_val}), ale Mistrz Gry nie zaliczył jeszcze punktu w fabule (brak tagu). Czekamy na działania gracza.")
+                else:
+                    if active_tp.id in completed_ids:
+                        print(f"⚠️ [TURN-BLOCK] GM próbował przedwcześnie zaliczyć punkt #{active_tp.id} tagiem, ale tura jest za niska ({current_tura}/{cond_val}). Odrzucono.")
+
+            elif cond_type == "rzut":
+                # ZASADA DLA RZUTÓW: Wymagany jest FIZYCZNY RZUT gracza >= wartości.
+                if current_rzut is not None and current_rzut >= cond_val:
+                    is_ready = True
+                    print(f"🎲 [DICE-GO] Punkt #{active_tp.id} ('{active_tp.title}') zaliczony przez rzut ({current_rzut} >= {cond_val}).")
+                else:
+                    if active_tp.id in completed_ids:
+                        print(f"⚠️ [DICE-BLOCK] GM chciał zaliczyć punkt #{active_tp.id} (wymaga rzutu {cond_val}), ale brak rzutu (ostatni: {current_rzut}). Odrzucono.")
+
+            # Wykonanie przejścia, jeśli spełniono kryteria
+            if is_ready:
+                active_tp.status = "wykonany"
+                self.has_unsaved_changes = True
+                
+                # Resetujemy licznik tur po każdym zamkniętym etapie do 0
+                self.game_state["tura"] = 0
+                
+                # Jeśli to był punkt z rzutem, czyszczymy rzut dla kolejnego etapu
+                if cond_type == "rzut":
+                    self.game_state["ostatni_rzut"] = None
+                    self.game_state["rzut_wykonany"] = False
+
+                print(f"🚀 [STAGE TRANSITION] Etap zamknięty. Punkt #{active_tp.id} wykonany. Tura zresetowana do 0.")
+
+        # Odświeżenie interfejsu
+        update_game_stage(self.game_state, self.turning_points)
+        self.update_turning_points_ui()
+
         cleaned_text = re.sub(pattern, "", text).strip()
         return cleaned_text
 
