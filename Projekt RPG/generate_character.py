@@ -1,58 +1,47 @@
 import json
 
-from google import genai
-from google.genai import types
 from pydantic import ValidationError
 
 from character import Character, validate_character_response
 from config import (
     CHARACTER_GENERATION_MAX_ATTEMPTS,
     CHARACTER_SYSTEM_INSTRUCTION_PATH,
-    load_config,
 )
+from llm_client import LLMProvider
 
 
 def generate_character(
     description: str,
-    client: genai.Client,
+    provider: LLMProvider,
     *,
-    model: str | None = None,
     max_attempts: int = CHARACTER_GENERATION_MAX_ATTEMPTS,
 ) -> Character:
     """Generuje i waliduje postać na podstawie opisu gracza."""
     description = description.strip()
     if not description:
         raise ValueError("Opis postaci nie może być pusty.")
-    if model is None:
-        model = load_config().model
-    if not isinstance(model, str) or not model.strip():
-        raise ValueError("Nazwa modelu nie może być pusta.")
 
     system_instruction = CHARACTER_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
+    json_schema = Character.model_json_schema()
 
-    config = types.GenerateContentConfig(
-        system_instruction=system_instruction,
-        response_mime_type="application/json",
-        response_json_schema=Character.model_json_schema(),
-    )
     contents = json.dumps({"player_description": description}, ensure_ascii=False)
     last_error = None
 
     for _ in range(max_attempts):
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config,
+        response_text = provider.generate_text(
+            contents,
+            system_instruction=system_instruction,
+            json_schema=json_schema,
         )
 
         try:
-            return validate_character_response(response.text or "")
+            return validate_character_response(response_text)
         except ValidationError as error:
             last_error = error
             contents = json.dumps(
                 {
                     "player_description": description,
-                    "previous_response": response.text or "",
+                    "previous_response": response_text,
                     "validation_errors": str(error),
                 },
                 ensure_ascii=False,

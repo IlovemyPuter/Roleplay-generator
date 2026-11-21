@@ -51,21 +51,20 @@ class CharacterSelectWindow:
             return
 
         try:
-            from google import genai
             from character_manager import save_character, load_characters
+            from llm_client import LLMError, create_provider
 
-            settings = load_config()
-            if not settings.api_key:
-                messagebox.showerror("Błąd", "Brak klucza GEMINI_API_KEY w zmiennych środowiskowych.", parent=self.root)
+            try:
+                provider = create_provider(load_config())
+            except LLMError as error:
+                messagebox.showerror("Błąd", error.user_message or str(error), parent=self.root)
                 return
-
-            client = genai.Client(api_key=settings.api_key)
 
             # Informacja dla użytkownika (generowanie może chwilę potrwać)
             messagebox.showinfo("Generowanie","Trwa generowanie nowej postaci przez AI... Kliknij OK i poczekaj chwilę.", parent=self.root)
 
             # 1. Wywołanie funkcji generującej (zwraca obiekt Character)[cite: 2]
-            new_character = generate_character(description, client, model=settings.model)
+            new_character = generate_character(description, provider)
 
             # 2. Zapisanie postaci do pliku JSON w folderze characters/[cite: 4]
             saved_path = save_character(new_character)

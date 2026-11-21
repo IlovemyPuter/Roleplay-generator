@@ -6,10 +6,10 @@ import re
 from pydantic import ValidationError
 from error_handler import build_user_error_message
 
-from config import CHAT_TEMPERATURE, load_config
+from config import load_config
 
-from google import genai
-from google.genai import types
+# Warstwa abstrakcji nad dostawcami LLM (Gemini / OpenRouter / Ollama)
+from llm_client import create_provider, history_from_clean
 
 # Importujemy interfejs graficzny
 import tkinter as tk
@@ -28,14 +28,14 @@ from save_manager import save_game, load_game
 
 
 settings = load_config()
-model = settings.model
 
-client = None
-if settings.api_key:
-    try:
-        client = genai.Client(api_key=settings.api_key)
-    except Exception as e:
-        print(f"Błąd inicjalizacji klienta Gemini: {e}")
+# Aktywny dostawca LLM wybierany zmienną LLM_PROVIDER (gemini | openrouter | ollama).
+# Brak konfiguracji nie blokuje uruchomienia interfejsu – wtedy llm = None.
+llm = None
+try:
+    llm = create_provider(settings)
+except Exception as e:
+    print(f"Błąd inicjalizacji dostawcy LLM ({settings.provider}): {e}")
 
 # --- OBSŁUGA BŁĘDÓW API ---------------------------------------
 def format_retry_time(error_str: str) -> str:
@@ -70,7 +70,7 @@ def classify_api_error(error: Exception) -> str:
     return "inny"
 
 class HybridGMRoleplayChatApp(RoleplayChatApp):
-    """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
+    """Rozszerzona klasa okna czatu, która integruje interfejs z wybranym dostawcą LLM."""
 
     def __init__(self, root, character, save_data=None, player_character=None):
         # Inicjalizacja klasycznego okna z interfejsu
@@ -118,7 +118,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.system_instruction = ""
             self.game_state = {"tura": 0, "ostatni_rzut": None}
             self.has_unsaved_changes = False
-            self.root.after(100, self.init_gemini_chat)
+            self.root.after(100, self.init_llm_chat)
 
     def update_turning_points_ui(self):
         
@@ -223,9 +223,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 print(f"❌ Błąd wczytywania: {data}")
 
     def restore_loaded_session(self):
-        """Odtwarza widok czatu oraz sesję Gemini z wczytanej historii."""
-        if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "error_tag")
+        """Odtwarza widok czatu oraz sesję LLM z wczytanej historii."""
+        if not llm:
+            self.append_message("System", "BŁĄD: Dostawca LLM nie został zainicjalizowany. Sprawdź konfigurację (.env).", "error_tag")
             return
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
@@ -233,34 +233,18 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             text = msg["text"]
             tag = "bot_tag" if sender == "Mistrz Gry & Świat" else "user_tag"
             self.append_message(sender, text, tag)
-            
-        # 2. Przygotowujemy historię dla struktury SDK Gemini
-        # Konwertujemy historię do formatu typów wiadomości Gemini (user / model)
-        gemini_history = []
-        for msg in self.clean_chat_history:
-            role = "user" if msg["sender"] == "Me" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["text"])]
-                )
-            )
 
-        # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
+        # 2. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
         try:
-            self.gemini_chat = client.chats.create(
-                model=model,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_instruction,
-                    temperature=CHAT_TEMPERATURE,
-                ),
-                history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
+            self.llm_chat = llm.start_chat(
+                self.system_instruction,
+                history=history_from_clean(self.clean_chat_history),  # <-- model kontynuuje zapisaną historię
             )
             self.update_turning_points_ui()
             self.append_message("System", "📂 Stan gry został pomyślnie wczytany! Możesz kontynuować przygodę.", "system_tag")
         except Exception as e:
-            self.handle_gemini_error(e)
-            self.gemini_chat = None
+            self.handle_llm_error(e)
+            self.llm_chat = None
 
     # Metoda wywołująca zapis w klasie HybridGMRoleplayChatApp:
     def handle_save(self):
@@ -322,24 +306,24 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         CharacterSelectWindow(select_root, on_character_selected=start_chat_app_with_hybrid_gm)
         select_root.mainloop()
 
-    def init_gemini_chat(self):
-        if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "error_tag")
-            self.gemini_chat = None
+    def init_llm_chat(self):
+        if not llm:
+            self.append_message("System", "BŁĄD: Dostawca LLM nie został zainicjalizowany. Sprawdź konfigurację (.env).", "error_tag")
+            self.llm_chat = None
             return
 
-        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
+        print(f"⏳ [API] Inicjalizowanie nowej sesji czatu ({llm.name})...")
 
         # Generowanie 5 punktów zwrotnych na początku nowej przygody
         try:
             setting = self.character['role_and_background']
-            plot_outline = generate_plot(setting=setting, characters=[self.character], model=model, client=client)
+            plot_outline = generate_plot(setting=setting, characters=[self.character], provider=llm)
             self.turning_points = plot_outline.root
             self.update_turning_points_ui()
             print("✅ [API] Wygenerowano 5 punktów zwrotnych.")
         except Exception as e:
             print(f"⚠️ [API] Błąd generowania punktów zwrotnych: {e}")
-            self.handle_gemini_error(e)
+            self.handle_llm_error(e)
             self.show_system_error("Przygoda rusza bez punktów zwrotnych. Możesz grać dalej albo wrócić do menu i spróbować ponownie.")
             self.turning_points = []
             self.update_turning_points_ui()
@@ -364,14 +348,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         )
 
         try:
-            # Tworzymy instancję czatu w pakiecie google-genai z odpowiednią instrukcją systemową
-            self.gemini_chat = client.chats.create(
-                model=model,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_instruction,
-                    temperature=CHAT_TEMPERATURE,
-                )
-            )
+            # Tworzymy sesję czatu z odpowiednią instrukcją systemową
+            self.llm_chat = llm.start_chat(self.system_instruction)
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
 
             # Automatycznie generujemy początek przygody od razu po starcie czatu
@@ -379,8 +357,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
         except Exception as e:
             print(f"❌ [API] Błąd tworzenia sesji: {e}")
-            self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "error_tag")
-            self.gemini_chat = None
+            self.append_message("System", f"Błąd tworzenia sesji {llm.name}: {e}", "error_tag")
+            self.llm_chat = None
 
     def append_message(self, sender: str, message: str, tag_name: str):
         if tag_name != "error_tag":
@@ -404,7 +382,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self._start_on_new_line()
         self.append_message("System", message, "error_tag")
 
-    def handle_gemini_error(self, e: Exception):
+    def handle_llm_error(self, e: Exception):
         """Zamienia błąd API na czytelny komunikat w oknie gry."""
         error_msg = build_user_error_message(e)
         self.show_system_error(error_msg)
@@ -471,8 +449,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            if chunk.text:
-                full_text += chunk.text
+            if chunk:
+                full_text += chunk
 
                 if not gm_finalized:
                     # Sprawdzamy czy znacznik [TOWARZYSZ]: pojawił się już w tekście
@@ -530,8 +508,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
     def start_adventure(self):
         """Wysyła ukryty prompt startowy zawierający pełną listę punktów zwrotnych."""
-        if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
+        if not self.llm_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem LLM.", "error_tag")
             return
 
         # Przygotowanie czytelnej listy 5 punktów zwrotnych dla Mistrza Gry
@@ -565,24 +543,24 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
         try:
             print("📤 [API] Wysyłanie promptu startowego z mapą fabuły (ze streamowaniem)...")
-            response_stream = self.gemini_chat.send_message_stream(intro_prompt)
+            response_stream = self.llm_chat.send_message_stream(intro_prompt)
             self.stream_and_parse_response(response_stream)
             print("✅ [API] Zakończono pobieranie wprowadzenia.")
         except Exception as e:
             print(f"❌ [API] Błąd podczas generowania wprowadzenia: {e}")
-            self.handle_gemini_error(e)
+            self.handle_llm_error(e)
 
     def simulate_llm_response(self, prompt: str):
         """Wysyła zapytanie gracza i odbiera odpowiedź strumieniowo z podziałem."""
-        if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
+        if not self.llm_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem LLM.", "error_tag")
             return
 
         try:
-            print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (ze streamowaniem): \"{prompt[:30]}...\"")
+            print(f"📤 [API] Wysyłanie wiadomości gracza do modelu (ze streamowaniem): \"{prompt[:30]}...\"")
             
             # 1. Inicjalizujemy strumień zapytań
-            response_stream = self.gemini_chat.send_message_stream(prompt)
+            response_stream = self.llm_chat.send_message_stream(prompt)
             
             # 2. Próbujemy sparsować i odebrać odpowiedź
             # Jeśli po drodze wystąpi błąd API lub zerwanie, zostanie rzucony wyjątek
@@ -598,7 +576,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         except Exception as e:
             # W przypadku jakiegokolwiek błędu sieciowego/API tura NIE jest ruszana
             print(f"❌ [API] Błąd podczas komunikacji z API: {e}")
-            self.handle_gemini_error(e)
+            self.handle_llm_error(e)
             
     def safe_stream_and_parse(self, response_stream, prompt: str) -> bool:
         """Odbiera strumień i dopiero po sukcesie zalicza turę i zapisuje stan."""
@@ -608,8 +586,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            if chunk.text:
-                full_text += chunk.text
+            if chunk:
+                full_text += chunk
 
                 if not gm_finalized:
                     if "[TOWARZYSZ]:" in full_text:
@@ -712,7 +690,7 @@ def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
 
 if __name__ == "__main__":
     # Uruchomienie okna wyboru postaci z pliku interface.py, 
-    # ale jako funkcję zwrotną podajemy naszą nową klasę z obsługą Gemini.
+    # ale jako funkcję zwrotną podajemy naszą nową klasę z obsługą wybranego dostawcy LLM.
     select_root = tk.Tk()
     CharacterSelectWindow(select_root, on_character_selected=start_chat_app_with_hybrid_gm)
     select_root.mainloop()
