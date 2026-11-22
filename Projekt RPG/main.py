@@ -6,14 +6,14 @@ import re
 from pydantic import ValidationError
 from error_handler import build_user_error_message
 
-from config import SAVE_DIR, CHAT_TEMPERATURE, load_config
+from config import APP_DIR, SAVE_DIR, CHAT_TEMPERATURE, load_config
 
 from google import genai
 from google.genai import types
 
 # Importujemy interfejs graficzny
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 
 # Importujemy dane postaci i klasy okien z pliku interface.py
 from interface import CharacterSelectWindow, RoleplayChatApp
@@ -36,6 +36,157 @@ if settings.api_key:
         client = genai.Client(api_key=settings.api_key)
     except Exception as e:
         print(f"Błąd inicjalizacji klienta Gemini: {e}")
+
+DEFAULT_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+]
+
+USER_SETTINGS_PATH = APP_DIR / "llm_settings.json"
+
+
+def load_saved_llm_settings() -> dict:
+    if USER_SETTINGS_PATH.exists():
+        try:
+            data = json.loads(USER_SETTINGS_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+    return {}
+
+
+def save_llm_settings(api_key: str, model_name: str, remember_key: bool) -> None:
+    try:
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {"model": model_name}
+        if remember_key and api_key:
+            payload["api_key"] = api_key
+        USER_SETTINGS_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception as e:
+        print(f"⚠️ Nie udało się zapisać ustawień LLM: {e}")
+
+
+class LlmStartupDialog:
+    """Okno startowe pozwalające podać klucz API oraz wybrać/wpisać model LLM."""
+
+    def __init__(self, root: tk.Tk, initial_api_key: str = "", initial_model: str = ""):
+        self.root = root
+        self.root.title("Konfiguracja LLM")
+        self.root.resizable(False, False)
+
+        saved = load_saved_llm_settings()
+        start_key = saved.get("api_key") or initial_api_key or ""
+        start_model = saved.get("model") or DEFAULT_MODELS[2]
+
+        models = list(DEFAULT_MODELS)
+        if start_model and start_model not in models:
+            models.insert(0, start_model)
+
+        self.result: tuple[str, str] | None = None
+
+        frame = ttk.Frame(root, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Klucz API Gemini:", font=("Arial", 10, "bold")).pack(anchor="w")
+
+        key_row = ttk.Frame(frame)
+        key_row.pack(fill=tk.X, pady=(4, 12))
+
+        self.key_var = tk.StringVar(value=start_key)
+        self.key_entry = ttk.Entry(key_row, textvariable=self.key_var, show="*", width=42)
+        self.key_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self.show_key_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            key_row,
+            text="Pokaż",
+            variable=self.show_key_var,
+            command=self._toggle_key_visibility,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        ttk.Label(frame, text="Model LLM:", font=("Arial", 10, "bold")).pack(anchor="w")
+
+        self.model_var = tk.StringVar(value=start_model)
+        self.model_combo = ttk.Combobox(
+            frame,
+            textvariable=self.model_var,
+            values=models,
+            width=40,
+        )
+        self.model_combo.pack(fill=tk.X, pady=(4, 12))
+
+        self.remember_var = tk.BooleanVar(value=bool(saved.get("api_key")))
+        ttk.Checkbutton(
+            frame,
+            text="Zapamiętaj ustawienia lokalnie",
+            variable=self.remember_var,
+        ).pack(anchor="w", pady=(0, 14))
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X)
+
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(frame, textvariable=self.status_var, foreground="#444444").pack(
+            anchor="w", pady=(0, 8)
+        )
+
+        btn_row = ttk.Frame(frame)
+        btn_row.pack(fill=tk.X)
+
+        self.cancel_btn = ttk.Button(btn_row, text="Anuluj", command=self._on_cancel)
+        self.cancel_btn.pack(side=tk.RIGHT)
+
+        self.confirm_btn = ttk.Button(btn_row, text="Dalej", command=self._on_confirm)
+        self.confirm_btn.pack(side=tk.RIGHT, padx=(0, 8))
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_cancel)
+        self.key_entry.focus_set()
+
+    def _toggle_key_visibility(self) -> None:
+        self.key_entry.config(show="" if self.show_key_var.get() else "*")
+
+    def _on_confirm(self) -> None:
+        api_key = self.key_var.get().strip()
+        model_name = self.model_var.get().strip()
+
+        if not api_key:
+            messagebox.showwarning("Brak klucza API", "Wpisz klucz API, aby kontynuować.", parent=self.root)
+            return
+        if not model_name:
+            messagebox.showwarning("Brak modelu", "Wybierz lub wpisz nazwę modelu.", parent=self.root)
+            return
+
+        self.confirm_btn.config(state=tk.DISABLED)
+        self.cancel_btn.config(state=tk.DISABLED)
+        self.status_var.set("Sprawdzanie klucza i modelu...")
+        self.root.update_idletasks()
+
+        ok, message = verify_llm_credentials(api_key, model_name)
+
+        self.confirm_btn.config(state=tk.NORMAL)
+        self.cancel_btn.config(state=tk.NORMAL)
+
+        if not ok:
+            self.status_var.set("")
+            messagebox.showerror("Błąd konfiguracji LLM", message, parent=self.root)
+            return
+
+        self.status_var.set(message)
+        save_llm_settings(api_key, model_name, self.remember_var.get())
+        self.result = (api_key, model_name)
+        self.root.destroy()
+
+    def _on_cancel(self) -> None:
+        self.result = None
+        self.root.destroy()
 
 # --- OBSŁUGA BŁĘDÓW API ---------------------------------------
 def format_retry_time(error_str: str) -> str:
@@ -68,6 +219,26 @@ def classify_api_error(error: Exception) -> str:
     if re.search(r"\b504\b", text) or "DEADLINE_EXCEEDED" in upper or "TIMEOUT" in upper or "TIMED OUT" in upper:
         return "timeout"
     return "inny"
+
+def verify_llm_credentials(api_key: str, model_name: str) -> tuple[bool, str]:
+    """Sprawdza, czy klucz API działa i czy wskazany model jest dostępny."""
+    try:
+        test_client = genai.Client(api_key=api_key)
+        test_client.models.get(model=model_name)
+        return True, "Klucz i model są poprawne."
+    except Exception as exc:
+        err_text = str(exc)
+        upper = err_text.upper()
+
+        if "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper or "401" in err_text:
+            return False, "Nieprawidłowy klucz API Gemini. Sprawdź, czy został dobrze skopiowany."
+        if "404" in err_text or ("MODEL" in upper and "NOT FOUND" in upper):
+            return False, f"Nie znaleziono modelu '{model_name}'. Wybierz inny model z listy lub sprawdź jego nazwę."
+        if "429" in err_text or "RESOURCE_EXHAUSTED" in upper:
+            return False, "Przekroczono limit zapytań (429) podczas sprawdzania klucza/modelu. Spróbuj ponownie za chwilę."
+        if "400" in err_text:
+            return False, f"Błąd żądania (400) dla modelu '{model_name}': {exc}"
+        return False, f"Nie udało się zweryfikować połączenia: {exc}"
 
 class HybridGMRoleplayChatApp(RoleplayChatApp):
     """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
@@ -1010,9 +1181,33 @@ def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
     chat_root.mainloop()
 
 
+def apply_llm_config(api_key: str, model_name: str) -> None:
+    global client, model
+    model = model_name
+    client = genai.Client(api_key=api_key)
+
+
 if __name__ == "__main__":
-    # Uruchomienie okna wyboru postaci z pliku interface.py, 
-    # ale jako funkcję zwrotną podajemy naszą nową klasę z obsługą Gemini.
+    startup_root = tk.Tk()
+    dialog = LlmStartupDialog(
+        startup_root,
+        initial_api_key=settings.api_key or "",
+        initial_model=settings.model or "",
+    )
+    startup_root.mainloop()
+
+    if dialog.result is None:
+        raise SystemExit(0)
+
+    selected_key, selected_model = dialog.result
+    try:
+        apply_llm_config(selected_key, selected_model)
+    except Exception as e:
+        err_root = tk.Tk()
+        err_root.withdraw()
+        messagebox.showerror("Błąd klienta LLM", f"Nie udało się zainicjalizować klienta:\n{e}")
+        raise SystemExit(1)
+
     select_root = tk.Tk()
     CharacterSelectWindow(select_root, on_character_selected=start_chat_app_with_hybrid_gm)
     select_root.mainloop()
