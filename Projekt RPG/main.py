@@ -44,6 +44,7 @@ DEFAULT_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
     "gemini-2.0-flash",
+    "gemini-flash-latest"
 ]
 
 USER_SETTINGS_PATH = APP_DIR / "llm_settings.json"
@@ -238,6 +239,8 @@ def verify_llm_credentials(api_key: str, model_name: str) -> tuple[bool, str]:
             return False, "Przekroczono limit zapytań (429) podczas sprawdzania klucza/modelu. Spróbuj ponownie za chwilę."
         if "400" in err_text:
             return False, f"Błąd żądania (400) dla modelu '{model_name}': {exc}"
+        if "503" in err_text or "UNAVAILABLE" in upper or "OVERLOADED" in upper:
+            return False, f"Model '{model_name}' lub usługa jest chwilowo przeciążona (503). Spróbuj ponownie za chwilę."
         return False, f"Nie udało się zweryfikować połączenia: {exc}"
 
 class HybridGMRoleplayChatApp(RoleplayChatApp):
