@@ -9,7 +9,7 @@ from llm_client import Config, LLMConfigError, LLMError
 from pydantic import ValidationError
 from error_handler import build_user_error_message
 
-from config import SUPPORTED_PROVIDERS, APP_DIR, SAVE_DIR, CHAT_TEMPERATURE, load_config
+from config import DEFAULT_OLLAMA_BASE_URL, DEFAULT_OPENROUTER_BASE_URL, SUPPORTED_PROVIDERS, APP_DIR, SAVE_DIR, CHAT_TEMPERATURE, load_config
 
 # Warstwa abstrakcji nad dostawcami LLM (Gemini / OpenRouter / Ollama)
 from llm_client import create_provider, history_from_clean
@@ -324,13 +324,13 @@ def verify_llm_credentials(
         return False, "Podaj klucz API."
 
     try:
-        current_base_url = getattr(settings, "base_url", None) if clean_provider == getattr(settings, "provider", None) else None
+        resolved_base_url = _resolve_base_url(clean_provider)
         current_timeout = getattr(settings, "timeout_ms", None)
         cfg = Config(
             provider=clean_provider,
             api_key=clean_key,
             model=clean_model,
-            base_url=current_base_url,
+            base_url=resolved_base_url,
             timeout_ms=current_timeout,
         )
         provider = llm_client.create_provider(cfg)
@@ -353,10 +353,24 @@ def apply_llm_config(api_key: str, model_name: str, provider_name: str | None = 
         provider=resolved_provider,
         api_key=api_key,
         model=model_name,
-        base_url=getattr(settings, "base_url", None),
+        base_url=_resolve_base_url(resolved_provider),
         timeout_ms=getattr(settings, "timeout_ms", None),
     )
     llm = llm_client.create_provider(settings)
+
+def _resolve_base_url(provider_name: str) -> str | None:
+    current_base_url = (
+        getattr(settings, "base_url", None)
+        if provider_name == getattr(settings, "provider", None)
+        else None
+    )
+    if current_base_url:
+        return current_base_url
+    if provider_name == "openrouter":
+        return DEFAULT_OPENROUTER_BASE_URL
+    if provider_name == "ollama":
+        return DEFAULT_OLLAMA_BASE_URL
+    return None
 
 def _format_llm_exception(exc: Exception, model_name: str) -> tuple[bool, str]:
     err_text = str(exc)
@@ -1088,7 +1102,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            chunk_text = getattr(chunk, "text", None)
+            chunk_text = chunk if isinstance(chunk, str) else getattr(chunk, "text", None)
             if chunk_text:
                 full_text += chunk_text
 
@@ -1288,19 +1302,6 @@ def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
     chat_root = tk.Tk()
     HybridGMRoleplayChatApp(chat_root, selected_character, player_character=player_character)
     chat_root.mainloop()
-
-
-def apply_llm_config(api_key: str, model_name: str, provider_name: str | None = None) -> None:
-    global llm, settings
-    resolved_provider = provider_name or getattr(settings, "provider", "gemini") or "gemini"
-    settings = Config(
-        provider=resolved_provider,
-        api_key=api_key,
-        model=model_name,
-        base_url=getattr(settings, "base_url", None),
-        timeout_ms=getattr(settings, "timeout_ms", None),
-    )
-    llm = llm_client.create_provider(settings)
 
 
 if __name__ == "__main__":
