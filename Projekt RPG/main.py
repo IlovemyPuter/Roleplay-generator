@@ -3,13 +3,16 @@ import math
 import random
 import re
 
+import llm_client
+from llm_client import Config, LLMConfigError, LLMError
+
 from pydantic import ValidationError
 from error_handler import build_user_error_message
 
-from config import APP_DIR, SAVE_DIR, CHAT_TEMPERATURE, load_config
+from config import SUPPORTED_PROVIDERS, APP_DIR, SAVE_DIR, CHAT_TEMPERATURE, load_config
 
-from google import genai
-from google.genai import types
+# Warstwa abstrakcji nad dostawcami LLM (Gemini / OpenRouter / Ollama)
+from llm_client import create_provider, history_from_clean
 
 # Importujemy interfejs graficzny
 import tkinter as tk
@@ -26,26 +29,44 @@ from turn_processing import process_turn, update_game_stage
 # Importujemy logikę zapisu gry
 from save_manager import save_game, load_game
 
-
 settings = load_config()
-model = settings.model
 
-client = None
-if settings.api_key:
-    try:
-        client = genai.Client(api_key=settings.api_key)
-    except Exception as e:
-        print(f"Błąd inicjalizacji klienta Gemini: {e}")
+# Aktywny dostawca LLM wybierany zmienną LLM_PROVIDER (gemini | openrouter | ollama).
+# Brak konfiguracji nie blokuje uruchomienia interfejsu – wtedy llm = None.
+llm = None
+try:
+    llm = create_provider(settings)
+except Exception as e:
+    print(f"Błąd inicjalizacji dostawcy LLM ({settings.provider}): {e}")
 
-DEFAULT_MODELS = [
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-2.0-flash",
-    "gemini-flash-latest"
-]
+PROVIDER_MODELS: dict[str, list[str]] = {
+    "gemini": [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-flash-latest",
+    ],
+    "openrouter": [
+        "openrouter/auto",
+        "stepfun/step-3.5-flash:free",
+        "qwen/qwen3-coder:free",
+        "deepseek/deepseek-chat-v3-0324:free",
+        "google/gemini-2.5-flash",
+        "anthropic/claude-3.7-sonnet",
+    ],
+    "ollama": [
+        "llama3.2",
+        "qwen2.5:14b",
+        "gemma3:12b",
+        "mistral",
+        "deepseek-r1:8b",
+    ],
+}
+
+DEFAULT_MODELS = PROVIDER_MODELS["gemini"]
 
 USER_SETTINGS_PATH = APP_DIR / "llm_settings.json"
 
@@ -61,10 +82,17 @@ def load_saved_llm_settings() -> dict:
     return {}
 
 
-def save_llm_settings(api_key: str, model_name: str, remember_key: bool) -> None:
+def save_llm_settings(
+    api_key: str,
+    model_name: str,
+    remember_key: bool,
+    provider_name: str | None = None,
+) -> None:
     try:
         APP_DIR.mkdir(parents=True, exist_ok=True)
-        payload = {"model": model_name}
+        payload: dict[str, str] = {"model": model_name}
+        if provider_name:
+            payload["provider"] = provider_name
         if remember_key and api_key:
             payload["api_key"] = api_key
         USER_SETTINGS_PATH.write_text(
@@ -76,7 +104,7 @@ def save_llm_settings(api_key: str, model_name: str, remember_key: bool) -> None
 
 
 class LlmStartupDialog:
-    """Okno startowe pozwalające podać klucz API oraz wybrać/wpisać model LLM."""
+    """Okno startowe pozwalające wybrać dostawcę, podać klucz API oraz wybrać/wpisać model LLM."""
 
     def __init__(self, root: tk.Tk, initial_api_key: str = "", initial_model: str = ""):
         self.root = root
@@ -84,19 +112,53 @@ class LlmStartupDialog:
         self.root.resizable(False, False)
 
         saved = load_saved_llm_settings()
-        start_key = saved.get("api_key") or initial_api_key or ""
-        start_model = saved.get("model") or DEFAULT_MODELS[2]
+        providers = list(SUPPORTED_PROVIDERS) if SUPPORTED_PROVIDERS else ["gemini", "openrouter", "ollama"]
+        saved_provider = (saved.get("provider") or getattr(settings, "provider", "gemini") or "gemini").strip().lower()
+        start_provider = saved_provider if saved_provider in providers else providers[0]
 
-        models = list(DEFAULT_MODELS)
+        start_key = saved.get("api_key") or initial_api_key or ""
+        provider_models = PROVIDER_MODELS.get(start_provider, DEFAULT_MODELS)
+        default_for_provider = (
+            "gemini-3.5-flash-lite"
+            if start_provider == "gemini"
+            else (provider_models[0] if provider_models else "gemini-3.5-flash-lite")
+        )
+
+        candidate_model = saved.get("model") or initial_model
+        if not candidate_model or (start_provider == "gemini" and candidate_model == "gemini-flash-latest" and not saved.get("model")):
+            start_model = default_for_provider
+        else:
+            start_model = candidate_model
+
+        models = list(provider_models)
         if start_model and start_model not in models:
             models.insert(0, start_model)
 
-        self.result: tuple[str, str] | None = None
+        self.result: tuple[str, str, str] | None = None
 
         frame = ttk.Frame(root, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Klucz API Gemini:", font=("Arial", 10, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Dostawca LLM:", font=("Arial", 10, "bold")).pack(anchor="w")
+
+        self.provider_var = tk.StringVar(value=start_provider)
+        self.provider_combo = ttk.Combobox(
+            frame,
+            textvariable=self.provider_var,
+            values=providers,
+            state="readonly",
+            width=40,
+        )
+        self.provider_combo.pack(fill=tk.X, pady=(4, 12))
+        self.provider_combo.bind("<<ComboboxSelected>>", self._on_provider_change)
+
+        key_label_text = (
+            "Klucz API (opcjonalny dla Ollama):"
+            if start_provider == "ollama"
+            else f"Klucz API ({start_provider}):"
+        )
+        self.key_label = ttk.Label(frame, text=key_label_text, font=("Arial", 10, "bold"))
+        self.key_label.pack(anchor="w")
 
         key_row = ttk.Frame(frame)
         key_row.pack(fill=tk.X, pady=(4, 12))
@@ -131,9 +193,6 @@ class LlmStartupDialog:
             variable=self.remember_var,
         ).pack(anchor="w", pady=(0, 14))
 
-        btn_row = ttk.Frame(frame)
-        btn_row.pack(fill=tk.X)
-
         self.status_var = tk.StringVar(value="")
         ttk.Label(frame, textvariable=self.status_var, foreground="#444444").pack(
             anchor="w", pady=(0, 8)
@@ -155,10 +214,16 @@ class LlmStartupDialog:
         self.key_entry.config(show="" if self.show_key_var.get() else "*")
 
     def _on_confirm(self) -> None:
+        if getattr(self, "provider_var", None) is not None:
+            provider_name = (self.provider_var.get() or "").strip().lower()
+        else:
+            provider_name = (getattr(settings, "provider", "gemini") or "gemini").strip().lower()
+        if not provider_name:
+            provider_name = "gemini"
         api_key = self.key_var.get().strip()
         model_name = self.model_var.get().strip()
 
-        if not api_key:
+        if provider_name != "ollama" and not api_key:
             messagebox.showwarning("Brak klucza API", "Wpisz klucz API, aby kontynuować.", parent=self.root)
             return
         if not model_name:
@@ -170,7 +235,7 @@ class LlmStartupDialog:
         self.status_var.set("Sprawdzanie klucza i modelu...")
         self.root.update_idletasks()
 
-        ok, message = verify_llm_credentials(api_key, model_name)
+        ok, message = verify_llm_credentials(api_key, model_name, provider_name)
 
         self.confirm_btn.config(state=tk.NORMAL)
         self.cancel_btn.config(state=tk.NORMAL)
@@ -181,13 +246,36 @@ class LlmStartupDialog:
             return
 
         self.status_var.set(message)
-        save_llm_settings(api_key, model_name, self.remember_var.get())
-        self.result = (api_key, model_name)
+        save_llm_settings(api_key, model_name, self.remember_var.get(), provider_name=provider_name)
+        self.result = (provider_name, api_key, model_name)
         self.root.destroy()
 
     def _on_cancel(self) -> None:
         self.result = None
         self.root.destroy()
+
+    def _on_provider_change(self, event=None) -> None:
+        provider = (self.provider_var.get() or "gemini").strip().lower()
+        if hasattr(self, "key_label"):
+            if provider == "ollama":
+                self.key_label.config(text="Klucz API (opcjonalny dla Ollama):")
+            else:
+                self.key_label.config(text=f"Klucz API ({provider}):")
+
+        allowed_models = PROVIDER_MODELS.get(provider, DEFAULT_MODELS)
+        models = list(allowed_models)
+        self.model_combo["values"] = models
+
+        current = self.model_var.get().strip()
+        if current in allowed_models:
+            return
+
+        if provider == "gemini" and "gemini-3.5-flash-lite" in models:
+            self.model_var.set("gemini-3.5-flash-lite")
+        elif models:
+            self.model_var.set(models[0])
+        else:
+            self.model_var.set("")
 
 # --- OBSŁUGA BŁĘDÓW API ---------------------------------------
 def format_retry_time(error_str: str) -> str:
@@ -221,30 +309,71 @@ def classify_api_error(error: Exception) -> str:
         return "timeout"
     return "inny"
 
-def verify_llm_credentials(api_key: str, model_name: str) -> tuple[bool, str]:
-    """Sprawdza, czy klucz API działa i czy wskazany model jest dostępny."""
-    try:
-        test_client = genai.Client(api_key=api_key)
-        test_client.models.get(model=model_name)
-        return True, "Klucz i model są poprawne."
-    except Exception as exc:
-        err_text = str(exc)
-        upper = err_text.upper()
+def verify_llm_credentials(
+    api_key: str,
+    model_name: str,
+    provider_name: str = "gemini",
+) -> tuple[bool, str]:
+    clean_provider = (provider_name or "gemini").strip().lower()
+    clean_key = (api_key or "").strip()
+    clean_model = (model_name or "").strip()
 
-        if "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper or "401" in err_text:
-            return False, "Nieprawidłowy klucz API Gemini. Sprawdź, czy został dobrze skopiowany."
-        if "404" in err_text or ("MODEL" in upper and "NOT FOUND" in upper):
-            return False, f"Nie znaleziono modelu '{model_name}'. Wybierz inny model z listy lub sprawdź jego nazwę."
-        if "429" in err_text or "RESOURCE_EXHAUSTED" in upper:
-            return False, "Przekroczono limit zapytań (429) podczas sprawdzania klucza/modelu. Spróbuj ponownie za chwilę."
-        if "400" in err_text:
-            return False, f"Błąd żądania (400) dla modelu '{model_name}': {exc}"
-        if "503" in err_text or "UNAVAILABLE" in upper or "OVERLOADED" in upper:
-            return False, f"Model '{model_name}' lub usługa jest chwilowo przeciążona (503). Spróbuj ponownie za chwilę."
-        return False, f"Nie udało się zweryfikować połączenia: {exc}"
+    if not clean_model:
+        return False, "Wybierz lub wpisz nazwę modelu."
+    if clean_provider != "ollama" and not clean_key:
+        return False, "Podaj klucz API."
+
+    try:
+        current_base_url = getattr(settings, "base_url", None) if clean_provider == getattr(settings, "provider", None) else None
+        current_timeout = getattr(settings, "timeout_ms", None)
+        cfg = Config(
+            provider=clean_provider,
+            api_key=clean_key,
+            model=clean_model,
+            base_url=current_base_url,
+            timeout_ms=current_timeout,
+        )
+        provider = llm_client.create_provider(cfg)
+        provider.generate_text("ping", temperature=0.0)
+        return True, f"Połączono z dostawcą {provider.name} ({clean_model})."
+    except LLMConfigError as exc:
+        return False, exc.user_message or str(exc)
+    except LLMError as exc:
+        if exc.user_message:
+            return False, exc.user_message
+        return _format_llm_exception(exc, clean_model)
+    except Exception as exc:
+        return _format_llm_exception(exc, clean_model)
+
+
+def apply_llm_config(api_key: str, model_name: str, provider_name: str | None = None) -> None:
+    global llm, settings
+    resolved_provider = (provider_name or getattr(settings, "provider", "gemini") or "gemini").strip().lower()
+    settings = Config(
+        provider=resolved_provider,
+        api_key=api_key,
+        model=model_name,
+        base_url=getattr(settings, "base_url", None),
+        timeout_ms=getattr(settings, "timeout_ms", None),
+    )
+    llm = llm_client.create_provider(settings)
+
+def _format_llm_exception(exc: Exception, model_name: str) -> tuple[bool, str]:
+    err_text = str(exc)
+    upper = err_text.upper()
+
+    if "401" in err_text or "UNAUTHENTICATED" in upper or "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper:
+        return False, "Nieprawidłowy klucz API. Sprawdź klucz i spróbuj ponownie."
+    if "404" in err_text or "NOT_FOUND" in upper:
+        return False, f"Nie znaleziono modelu '{model_name}' (404)."
+    if "429" in err_text or "RESOURCE_EXHAUSTED" in upper or "QUOTA" in upper:
+        return False, "Przekroczono limit zapytań API (429). Spróbuj ponownie później."
+    if "503" in err_text or "UNAVAILABLE" in upper or "OVERLOADED" in upper:
+        return False, f"Model '{model_name}' lub usługa jest chwilowo przeciążona (503). Spróbuj ponownie za chwilę."
+    return False, f"Nie udało się zweryfikować połączenia: {err_text}"
 
 class HybridGMRoleplayChatApp(RoleplayChatApp):
-    """Rozszerzona klasa okna czatu, która integruje interfejs z Gemini API."""
+    """Rozszerzona klasa okna czatu, która integruje interfejs z wybranym dostawcą LLM."""
 
     def __init__(self, root, character, save_data=None, player_character=None):
         # Inicjalizacja klasycznego okna z interfejsu
@@ -292,7 +421,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             self.system_instruction = ""
             self.game_state = {"tura": 0, "ostatni_rzut": None}
             self.has_unsaved_changes = False
-            self.root.after(100, self.init_gemini_chat)
+            self.root.after(100, self.init_llm_chat)
 
     def update_turning_points_ui(self):
         # Dynamiczne włączanie/wyłączanie przycisku rzutu w zależności od punktów zwrotnych
@@ -409,9 +538,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 print(f"❌ Błąd wczytywania: {data}")
 
     def restore_loaded_session(self):
-        """Odtwarza widok czatu oraz sesję Gemini z wczytanej historii."""
-        if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany.", "error_tag")
+        """Odtwarza widok czatu oraz sesję LLM z wczytanej historii."""
+        if not llm:
+            self.append_message("System", "BŁĄD: Dostawca LLM nie został zainicjalizowany. Sprawdź konfigurację (.env).", "error_tag")
             return
         # 1. Wyświetlamy wczytaną historię w oknie czatu GUI
         for msg in self.clean_chat_history:
@@ -419,34 +548,18 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             text = msg["text"]
             tag = "bot_tag" if sender == "Mistrz Gry & Świat" else "user_tag"
             self.append_message(sender, text, tag)
-            
-        # 2. Przygotowujemy historię dla struktury SDK Gemini
-        # Konwertujemy historię do formatu typów wiadomości Gemini (user / model)
-        gemini_history = []
-        for msg in self.clean_chat_history:
-            role = "user" if msg["sender"] == "Me" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["text"])]
-                )
-            )
 
-        # 3. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
+        # 2. Tworzymy nowy czat z odtworzoną historią i instrukcją systemową
         try:
-            self.gemini_chat = client.chats.create(
-                model=model,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_instruction,
-                    temperature=CHAT_TEMPERATURE,
-                ),
-                history=gemini_history  # <-- Gemini kontynuuje zapisaną historię
+            self.llm_chat = llm.start_chat(
+                self.system_instruction,
+                history=history_from_clean(self.clean_chat_history),  # <-- model kontynuuje zapisaną historię
             )
             self.update_turning_points_ui()
             self.append_message("System", "📂 Stan gry został pomyślnie wczytany! Możesz kontynuować przygodę.", "system_tag")
         except Exception as e:
-            self.handle_gemini_error(e)
-            self.gemini_chat = None
+            self.handle_llm_error(e)
+            self.llm_chat = None
 
     # Metoda wywołująca zapis w klasie HybridGMRoleplayChatApp:
     def handle_save(self):
@@ -508,24 +621,26 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         CharacterSelectWindow(select_root, on_character_selected=start_chat_app_with_hybrid_gm)
         select_root.mainloop()
 
-    def init_gemini_chat(self):
-        if not client:
-            self.append_message("System", "BŁĄD: Klient Gemini nie został zainicjalizowany. Sprawdź klucz API.", "error_tag")
-            self.gemini_chat = None
+    def init_llm_chat(self):
+        if not llm:
+            self.append_message("System", "BŁĄD: Dostawca LLM nie został zainicjalizowany. Sprawdź konfigurację (.env).", "error_tag")
+            self.llm_chat = None
             return
 
-        print("⏳ [API] Inicjalizowanie nowej sesji czatu z Gemini...")
+        print(f"⏳ [API] Inicjalizowanie nowej sesji czatu ({llm.name})...")
 
         # Generowanie 5 punktów zwrotnych na początku nowej przygody
         generated_successfully = True
         try:
             setting = self.character['role_and_background']
-            plot_outline = generate_plot(setting=setting, characters=[self.character], model=model, client=client)
+            plot_outline = generate_plot(setting=setting, characters=[self.character], provider=llm)
             self.turning_points = plot_outline.root
             self.update_turning_points_ui()
             print("✅ [API] Wygenerowano 5 punktów zwrotnych.")
         except Exception as e:
             print(f"⚠️ [API] Błąd generowania punktów zwrotnych: {e}")
+            self.handle_llm_error(e)
+            self.show_system_error("Przygoda rusza bez punktów zwrotnych. Możesz grać dalej albo wrócić do menu i spróbować ponownie.")
             generated_successfully = False
             self.turning_points = []
 
@@ -565,20 +680,15 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         )
 
         try:
-            self.gemini_chat = client.chats.create(
-                model=model,
-                config=types.GenerateContentConfig(
-                    system_instruction=self.system_instruction,
-                    temperature=CHAT_TEMPERATURE,
-                )
-            )
+            # Tworzymy sesję czatu z odpowiednią instrukcją systemową
+            self.llm_chat = llm.start_chat(self.system_instruction)
             print("✅ [API] Sesja czatu została pomyślnie utworzona.")
             self.start_adventure()
 
         except Exception as e:
             print(f"❌ [API] Błąd tworzenia sesji: {e}")
-            self.append_message("System", f"Błąd tworzenia sesji Gemini: {e}", "error_tag")
-            self.gemini_chat = None
+            self.append_message("System", f"Błąd tworzenia sesji {llm.name}: {e}", "error_tag")
+            self.llm_chat = None
 
     def append_message(self, sender: str, message: str, tag_name: str):
         if tag_name != "error_tag":
@@ -602,7 +712,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self._start_on_new_line()
         self.append_message("System", message, "error_tag")
 
-    def handle_gemini_error(self, e: Exception):
+    def handle_llm_error(self, e: Exception):
         """Zamienia błąd API na czytelny komunikat w oknie gry."""
         error_msg = build_user_error_message(e)
         self.show_system_error(error_msg)
@@ -669,8 +779,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            if chunk.text:
-                full_text += chunk.text
+            if chunk:
+                full_text += chunk
 
                 if not gm_finalized:
                     # Sprawdzamy czy znacznik [TOWARZYSZ]: pojawił się już w tekście
@@ -727,9 +837,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 self.clean_chat_history.append({"sender": companion_name, "text": comp_text})
 
     def start_adventure(self, attempt: int = 1):
-        """Wysyła ukryty prompt startowy z mechanizmem automatycznego ponawiania do 3 razy i czyszczeniem pamięci w razie błędu."""
-        if not self.gemini_chat:
-            self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
+        """Wysyła ukryty prompt startowy zawierający pełną listę punktów zwrotnych."""
+        if not self.llm_chat:
+            self.append_message("System", "Brak aktywnego połączenia z modelem LLM.", "error_tag")
             return
 
         # Szukamy TYLKO PIERWSZEGO punktu o statusie "oczekujacy"
@@ -767,7 +877,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
         try:
             print(f"📤 [API] Wysyłanie promptu startowego (próba {attempt}/3)...")
-            response_stream = self.gemini_chat.send_message_stream(intro_prompt)
+            response_stream = self.llm_chat.send_message_stream(intro_prompt)
             
             # Bezpieczny odbiorca strumienia wprowadzenia
             success = self.safe_stream_and_parse_intro(response_stream)
@@ -789,14 +899,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
                 pass
 
             try:
-                self.gemini_chat = client.chats.create(
-                    model=model,
-                    config=types.GenerateContentConfig(
-                        system_instruction=self.system_instruction,
-                        temperature=CHAT_TEMPERATURE,
-                    )
-                )
-                print("🔄 [API] Zresetowano sesję czatu (wyczyszczono pamięć kontekstu).")
+                if llm:
+                    self.llm_chat = llm.start_chat(self.system_instruction)
+                    print("🔄 [API] Zresetowano sesję czatu (wyczyszczono pamięć kontekstu).")
             except Exception as chat_err:
                 print(f"❌ [API] Błąd tworzenia nowej sesji po resecie: {chat_err}")
 
@@ -824,8 +929,8 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            if chunk.text:
-                full_text += chunk.text
+            if chunk:
+                full_text += chunk
 
                 if not gm_finalized:
                     if "[TOWARZYSZ]:" in full_text:
@@ -879,7 +984,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
 
     def simulate_llm_response(self, prompt: str):
         """Wysyła zapytanie gracza wraz z aktualnym celem reżyserskim do Gemini."""
-        if not self.gemini_chat:
+        if not self.llm_chat:
             self.append_message("System", "Brak aktywnego połączenia z modelem Gemini.", "error_tag")
             return
 
@@ -929,7 +1034,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         try:
             print(f"📤 [API] Wysyłanie wiadomości gracza do Gemini (z aktywnym celem reżyserskim)...")
             
-            response_stream = self.gemini_chat.send_message_stream(full_prompt_for_ai)
+            response_stream = self.llm_chat.send_message_stream(full_prompt_for_ai)
             success = self.safe_stream_and_parse(response_stream, prompt)
             
             if not success:
@@ -956,7 +1061,7 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
             except Exception:
                 pass
 
-            self.handle_gemini_error(e)
+            self.handle_llm_error(e)
             
             # 3. Pytamy użytkownika, czy chce wysłać wiadomość ponownie
             self.ask_to_resend(prompt)
@@ -983,8 +1088,9 @@ class HybridGMRoleplayChatApp(RoleplayChatApp):
         self.start_streaming_message("Mistrz Gry & Świat", "bot_tag")
 
         for chunk in response_stream:
-            if chunk.text:
-                full_text += chunk.text
+            chunk_text = getattr(chunk, "text", None)
+            if chunk_text:
+                full_text += chunk_text
 
                 if not gm_finalized:
                     if "[TOWARZYSZ]:" in full_text:
@@ -1184,10 +1290,17 @@ def start_chat_app_with_hybrid_gm(selected_character, player_character=None):
     chat_root.mainloop()
 
 
-def apply_llm_config(api_key: str, model_name: str) -> None:
-    global client, model
-    model = model_name
-    client = genai.Client(api_key=api_key)
+def apply_llm_config(api_key: str, model_name: str, provider_name: str | None = None) -> None:
+    global llm, settings
+    resolved_provider = provider_name or getattr(settings, "provider", "gemini") or "gemini"
+    settings = Config(
+        provider=resolved_provider,
+        api_key=api_key,
+        model=model_name,
+        base_url=getattr(settings, "base_url", None),
+        timeout_ms=getattr(settings, "timeout_ms", None),
+    )
+    llm = llm_client.create_provider(settings)
 
 
 if __name__ == "__main__":
@@ -1202,9 +1315,14 @@ if __name__ == "__main__":
     if dialog.result is None:
         raise SystemExit(0)
 
-    selected_key, selected_model = dialog.result
+    if len(dialog.result) == 3:
+        selected_provider, selected_key, selected_model = dialog.result
+    else:
+        selected_key, selected_model = dialog.result
+        selected_provider = getattr(settings, "provider", "gemini")
+
     try:
-        apply_llm_config(selected_key, selected_model)
+        apply_llm_config(selected_key, selected_model, provider_name=selected_provider)
     except Exception as e:
         err_root = tk.Tk()
         err_root.withdraw()

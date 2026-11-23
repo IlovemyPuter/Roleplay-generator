@@ -27,7 +27,7 @@ def classify_api_error(error: Exception) -> str:
         return "limit"
     if isinstance(error, (json.JSONDecodeError, ValidationError)) or "JSON" in upper or "ZARYS" in upper:
         return "json"
-    if re.search(r"\b400\b", text) or "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper:
+    if re.search(r"\b40[01]\b", text) or "API_KEY_INVALID" in upper or "API KEY NOT VALID" in upper:
         return "klucz"
     if re.search(r"\b503\b", text) or "UNAVAILABLE" in upper:
         return "przeciazenie"
@@ -51,9 +51,10 @@ def build_user_error_message(error: Exception) -> str:
             f"• Limit odnowi się za: {format_retry_time(error_str)}\n"
             "• Gra nie została przerwana. Możesz ją zapisać (F5) i wrócić do niej później.\n\n"
             "🛠️ Jak obejść ten problem?\n"
-            "1. Płatny plan: w Google AI Studio przejdź na plan Pay-as-you-go.\n"
-            "2. Inne konto: wygeneruj klucz API na innym koncie Google i podmień go w aplikacji.\n"
-            "3. Inny model: zmień model na taki, który ma osobną pulę zapytań."
+            "1. Płatny plan lub doładowanie konta u dostawcy API.\n"
+            "2. Inne konto: wygeneruj klucz API na innym koncie i podmień go w aplikacji.\n"
+            "3. Inny model lub dostawca: zmień model (GEMINI_MODEL / OPENROUTER_MODEL) "
+            "albo przełącz LLM_PROVIDER, np. na lokalną Ollamę."
         )
     elif kind == "json":
         details = error_str.strip().replace("\n", " ")
@@ -67,17 +68,18 @@ def build_user_error_message(error: Exception) -> str:
         )
     elif kind == "klucz":
         return (
-            "❌ Niepoprawny klucz API (błąd 400)\n"
+            "❌ Niepoprawny klucz API (błąd 400/401)\n"
             "• Podany klucz API jest nieważny lub został błędnie wpisany.\n\n"
             "🛠️ Jak to naprawić?\n"
-            "1. Wejdź na stronę Google AI Studio (aistudio.google.com).\n"
-            "2. Wygeneruj nowy klucz API.\n"
-            "3. Upewnij się, że poprawnie ustawiłeś zmienną środowiskową GEMINI_API_KEY."
+            "1. Wygeneruj nowy klucz API u swojego dostawcy "
+            "(Google AI Studio dla Gemini, openrouter.ai/keys dla OpenRouter).\n"
+            "2. Upewnij się, że poprawnie ustawiłeś GEMINI_API_KEY lub OPENROUTER_API_KEY "
+            "(w pliku .env lub zmiennych środowiskowych)."
         )
     elif kind == "przeciazenie":
         return (
-            "⚠️ Model Gemini jest obecnie mocno obciążony (błąd 503). "
-            "To chwilowy problem po stronie Google. Spróbuj wysłać wiadomość ponownie za kilka sekund."
+            "⚠️ Model jest obecnie mocno obciążony (błąd 503). "
+            "To chwilowy problem po stronie dostawcy. Spróbuj wysłać wiadomość ponownie za kilka sekund."
         )
     elif kind == "timeout":
         return (
