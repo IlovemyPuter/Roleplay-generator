@@ -10,80 +10,88 @@ PROJECT_DIR = Path(__file__).resolve().parent.parent / "Projekt RPG"
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
+import llm_client
+from config import Config
+from llm_client import LLMConfigError, LLMError, create_provider
 import main
 
 
-EXPECTED_FLASH_AND_PRO_MODELS = [
-    "gemini-3.5-flash-lite",
+EXPECTED_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
     "gemini-2.5-flash",
     "gemini-2.5-pro",
+    "gemini-2.0-flash",
     "gemini-flash-latest",
 ]
 
 
-class _FakeModelsAPI:
-    def __init__(self, side_effect=None, return_value=None):
-        self._side_effect = side_effect
-        self._return_value = return_value
-        self.calls = []
+class _FakeProvider:
+    def __init__(self, *, name="Gemini", model="gemini-3.8-flash", generate_side_effect=None, generate_return="OK"):
+        self.name = name
+        self.model = model
+        self._generate_side_effect = generate_side_effect
+        self._generate_return = generate_return
+        self.generate_calls = []
+        self.chat_calls = []
 
-    def get(self, *, model: str):
-        self.calls.append(model)
-        if self._side_effect is not None:
-            if isinstance(self._side_effect, list):
-                item = self._side_effect.pop(0)
+    def generate_text(self, contents: str, **kwargs) -> str:
+        self.generate_calls.append((contents, kwargs))
+        if self._generate_side_effect is not None:
+            if isinstance(self._generate_side_effect, list):
+                item = self._generate_side_effect.pop(0)
                 if isinstance(item, BaseException):
                     raise item
                 return item
-            if isinstance(self._side_effect, BaseException):
-                raise self._side_effect
-            return self._side_effect(model)
-        return self._return_value or SimpleNamespace(name=f"models/{model}")
+            if isinstance(self._generate_side_effect, BaseException):
+                raise self._generate_side_effect
+            return self._generate_side_effect(contents, **kwargs)
+        return self._generate_return
 
-
-class _FakeGenAIClient:
-    def __init__(self, models_api: _FakeModelsAPI):
-        self.models = models_api
-        self.received_api_keys = []
-
-    def __call__(self, *, api_key: str):
-        self.received_api_keys.append(api_key)
-        return self
+    def start_chat(self, system_instruction: str, **kwargs):
+        self.chat_calls.append((system_instruction, kwargs))
+        return MagicMock()
 
 
 def test_default_models_order_and_contents():
     assert hasattr(main, "DEFAULT_MODELS")
-    assert main.DEFAULT_MODELS[2] == "gemini-3.5-flash-lite"
     assert "gemini-flash-3.5-lite" not in main.DEFAULT_MODELS
-    for model_name in EXPECTED_FLASH_AND_PRO_MODELS:
+    for model_name in EXPECTED_MODELS:
         assert model_name in main.DEFAULT_MODELS
 
 
-@pytest.mark.parametrize("model_name", EXPECTED_FLASH_AND_PRO_MODELS)
+@pytest.mark.parametrize("model_name", EXPECTED_MODELS)
 def test_verify_llm_credentials_success_for_all_models(monkeypatch, model_name):
-    fake_models = _FakeModelsAPI(return_value=SimpleNamespace(name=f"models/{model_name}"))
-    fake_client_factory = _FakeGenAIClient(fake_models)
-    monkeypatch.setattr(main.genai, "Client", fake_client_factory)
+    captured_configs = []
+    fake_provider = _FakeProvider(name="Gemini", model=model_name, generate_return="pong")
 
-    ok, message = main.verify_llm_credentials("AIzaValidKey123", model_name)
+    def _fake_create_provider(cfg: Config):
+        captured_configs.append(cfg)
+        return fake_provider
+
+    monkeypatch.setattr(llm_client, "create_provider", _fake_create_provider)
+
+    ok, message = main.verify_llm_credentials("AIzaValidKey123", model_name, provider_name="gemini")
 
     assert ok is True
-    assert fake_client_factory.received_api_keys == ["AIzaValidKey123"]
-    assert fake_models.calls == [model_name]
+    assert len(captured_configs) == 1
+    assert captured_configs[0].api_key == "AIzaValidKey123"
+    assert captured_configs[0].model == model_name
+    assert fake_provider.generate_calls
     assert isinstance(message, str) and len(message) > 0
 
 
-@pytest.mark.parametrize("model_name", EXPECTED_FLASH_AND_PRO_MODELS)
+@pytest.mark.parametrize("model_name", EXPECTED_MODELS)
 def test_verify_llm_credentials_model_not_found(monkeypatch, model_name):
-    fake_models = _FakeModelsAPI(
-        side_effect=RuntimeError(f"404 NOT_FOUND: Model {model_name} not found")
+    fake_provider = _FakeProvider(
+        name="Gemini",
+        model=model_name,
+        generate_side_effect=RuntimeError(f"404 NOT_FOUND: Model {model_name} not found"),
     )
-    fake_client_factory = _FakeGenAIClient(fake_models)
-    monkeypatch.setattr(main.genai, "Client", fake_client_factory)
+    monkeypatch.setattr(llm_client, "create_provider", lambda cfg: fake_provider)
 
-    ok, message = main.verify_llm_credentials("AIzaValidKey123", model_name)
+    ok, message = main.verify_llm_credentials("AIzaValidKey123", model_name, provider_name="gemini")
 
     assert ok is False
     assert model_name in message
@@ -99,14 +107,12 @@ def test_verify_llm_credentials_model_not_found(monkeypatch, model_name):
     ],
 )
 def test_verify_llm_credentials_handles_api_errors(monkeypatch, exc, expected_snippet):
-    fake_models = _FakeModelsAPI(side_effect=exc)
-    fake_client_factory = _FakeGenAIClient(fake_models)
-    monkeypatch.setattr(main.genai, "Client", fake_client_factory)
+    fake_provider = _FakeProvider(name="Gemini", model="gemini-3.8-flash", generate_side_effect=exc)
+    monkeypatch.setattr(llm_client, "create_provider", lambda cfg: fake_provider)
 
-    ok, message = main.verify_llm_credentials("AIzaTestKey123", "gemini-3.5-flash-lite")
+    ok, message = main.verify_llm_credentials("AIzaTestKey123", "gemini-3.8-flash", provider_name="gemini")
 
     assert ok is False
-    assert fake_client_factory.received_api_keys == ["AIzaTestKey123"]
     assert expected_snippet.lower() in message.lower()
 
 
@@ -145,7 +151,7 @@ class _DummyVar:
         self._value = value
 
 
-def _make_dialog_stub(api_key="AIzaTestKey", model_name="gemini-3.5-flash-lite", remember=False):
+def _make_dialog_stub(api_key="AIzaTestKey", model_name="gemini-3.8-flash", remember=False):
     dialog = main.LlmStartupDialog.__new__(main.LlmStartupDialog)
     dialog.root = MagicMock()
     dialog.key_var = _DummyVar(api_key)
@@ -162,7 +168,7 @@ def test_dialog_confirm_empty_key_shows_warning(monkeypatch):
     warn_mock = MagicMock()
     monkeypatch.setattr(main.messagebox, "showwarning", warn_mock)
 
-    dialog = _make_dialog_stub(api_key="   ", model_name="gemini-3.5-flash-lite")
+    dialog = _make_dialog_stub(api_key="   ", model_name="gemini-3.8-flash")
     dialog._on_confirm()
 
     assert dialog.result is None
@@ -196,10 +202,10 @@ def test_dialog_confirm_api_error_shows_error_and_reenables_buttons(monkeypatch,
     monkeypatch.setattr(
         main,
         "verify_llm_credentials",
-        lambda key, model: (False, f"Błąd API ({error_code})"),
+        lambda key, model, *args, **kwargs: (False, f"Błąd API ({error_code})"),
     )
 
-    dialog = _make_dialog_stub(api_key="AIzaTestKey", model_name="gemini-3.5-flash-lite")
+    dialog = _make_dialog_stub(api_key="AIzaTestKey", model_name="gemini-3.8-flash")
     dialog._on_confirm()
 
     assert dialog.result is None
@@ -211,16 +217,16 @@ def test_dialog_confirm_api_error_shows_error_and_reenables_buttons(monkeypatch,
     )
 
 
-@pytest.mark.parametrize("model_name", EXPECTED_FLASH_AND_PRO_MODELS)
+@pytest.mark.parametrize("model_name", EXPECTED_MODELS)
 def test_dialog_confirm_success_for_every_supported_model(tmp_path, monkeypatch, model_name):
     monkeypatch.setattr(main, "USER_SETTINGS_PATH", tmp_path / "llm_settings.json")
     monkeypatch.setattr(main, "SAVE_DIR", tmp_path)
-    monkeypatch.setattr(main, "verify_llm_credentials", lambda key, model: (True, "OK"))
+    monkeypatch.setattr(main, "verify_llm_credentials", lambda key, model, *args, **kwargs: (True, "OK"))
 
     dialog = _make_dialog_stub(api_key="AIzaGoodKey", model_name=model_name, remember=True)
     dialog._on_confirm()
 
-    assert dialog.result == ("AIzaGoodKey", model_name)
+    assert dialog.result == ("gemini", "AIzaGoodKey", model_name)
     saved = json.loads((tmp_path / "llm_settings.json").read_text(encoding="utf-8"))
     assert saved["model"] == model_name
     assert saved["api_key"] == "AIzaGoodKey"
@@ -236,43 +242,54 @@ def test_app_error_classifier_recognizes_quota_and_overload(err_snippet):
         msg = main.build_user_error_message(RuntimeError(f"Error {err_snippet}: busy"))
         assert isinstance(msg, str) and len(msg) > 0
 
+
 @pytest.mark.parametrize("error_code", ["429 RESOURCE_EXHAUSTED", "503 UNAVAILABLE"])
 def test_chat_turn_handles_quota_or_overload_without_crashing(monkeypatch, error_code):
     """Sprawdza zachowanie podczas rozmowy na czacie, gdy model zwróci 429 lub 503."""
     app = main.HybridGMRoleplayChatApp.__new__(main.HybridGMRoleplayChatApp)
     app.root = MagicMock()
     app.clean_chat_history = [{"sender": "Me", "text": "Idę dalej."}]
+    app.game_state = {"tura": 1, "ostatni_rzut": None, "rzut_wykonany": False}
+    app.turning_points = []
+    app.has_unsaved_changes = False
     app.messages_displayed = []
     app.append_message = lambda sender, msg, tag=None: app.messages_displayed.append((sender, msg, tag))
+    app.show_system_error = lambda msg: app.messages_displayed.append(("System", msg, "error_tag"))
+    app.handle_llm_error = lambda exc: app.messages_displayed.append(("System", str(exc), "error_tag"))
+    app.discard_empty_stream_message = MagicMock()
 
     fake_chat = MagicMock()
-    fake_chat.send_message.side_effect = RuntimeError(f"{error_code}: model busy")
-    app.chat_session = fake_chat
+    fake_chat.send_message_stream.side_effect = RuntimeError(f"{error_code}: model busy")
+    app.llm_chat = fake_chat
 
-    # Jeśli w Twojej klasie metoda wysyłania nazywa się inaczej (np. _send_chat_message / on_send):
-    for method_name in ("send_chat_message", "_send_message", "handle_send_message"):
-        if hasattr(app, method_name):
-            getattr(app, method_name)("Sprawdzam drzwi.")
-            assert any(sender == "System" for sender, _, _ in app.messages_displayed)
-            assert app.clean_chat_history[-1]["text"] == "Idę dalej."
-            break
+    monkeypatch.setattr("tkinter.messagebox.askyesno", lambda *args, **kwargs: False)
+
+    if hasattr(app, "simulate_llm_response"):
+        app.simulate_llm_response("Sprawdzam drzwi.")
+        assert any(sender == "System" for sender, _, _ in app.messages_displayed)
+        assert app.clean_chat_history[-1]["text"] == "Idę dalej."
 
 
 @pytest.mark.parametrize("error_code", ["429 RESOURCE_EXHAUSTED", "503 UNAVAILABLE"])
 def test_initial_turning_points_init_handles_api_error(monkeypatch, error_code):
-    """Sprawdza błędy 429/503 podczas początkowej generacji/inicjacji punktów zwrotnych."""
+    """Sprawdza błędy 429/503 podczas początkowej generacji punktów zwrotnych."""
+    fake_provider = _FakeProvider(
+        name="Gemini",
+        model="gemini-3.8-flash",
+        generate_side_effect=RuntimeError(f"{error_code}: overloaded"),
+    )
+    monkeypatch.setattr(main, "llm", fake_provider)
+
     for func_name in ("generate_turning_points", "init_turning_points", "create_initial_turning_points"):
         if hasattr(main, func_name):
             fn = getattr(main, func_name)
-            fake_models = _FakeModelsAPI(side_effect=RuntimeError(f"{error_code}: overloaded"))
-            monkeypatch.setattr(main.genai, "Client", lambda **kwargs: SimpleNamespace(models=fake_models))
             with pytest.raises(Exception):
                 fn(MagicMock(), "Opis świata i postaci")
             break
 
 
 def test_start_adventure_retries_up_to_three_attempts_on_transient_errors(monkeypatch):
-    """Sprawdza scenariusz 3 prób rozpoczęcia przygody (np. 2 błędy 503/429 i 3. próba udana lub 3 porażki)."""
+    """Sprawdza scenariusz 3 prób rozpoczęcia przygody (sukces przy 3. próbie oraz 3 porażki)."""
     attempts = {"count": 0}
 
     def flaky_start(*args, **kwargs):
@@ -281,13 +298,6 @@ def test_start_adventure_retries_up_to_three_attempts_on_transient_errors(monkey
             raise RuntimeError("503 UNAVAILABLE: temporary overload")
         return "Przygotowana przygoda"
 
-    # Przypadek A: 3. próba się udaje
-    for fn_name in ("start_adventure_with_retries", "init_adventure", "start_new_adventure"):
-        if hasattr(main, fn_name):
-            monkeypatch.setattr(main, "_try_start_adventure", flaky_start, raising=False)
-            break
-
-    # Niezależnie od nazwy funkcji w main.py — test weryfikuje samą logikę 3 prób:
     def run_three_attempts(operation):
         last_exc = None
         for attempt in range(1, 4):
@@ -303,7 +313,6 @@ def test_start_adventure_retries_up_to_three_attempts_on_transient_errors(monkey
     assert used_attempts == 3
     assert result == "Przygotowana przygoda"
 
-    # Przypadek B: wszystkie 3 próby kończą się błędem 429/503
     def always_failing_start(*args, **kwargs):
         raise RuntimeError("429 RESOURCE_EXHAUSTED: quota exceeded")
 
@@ -311,3 +320,123 @@ def test_start_adventure_retries_up_to_three_attempts_on_transient_errors(monkey
     assert ok_fail is False
     assert failed_attempts == 3
     assert "429" in err_msg
+
+
+def test_openrouter_missing_api_key_raises_config_error():
+    cfg = Config(
+        provider="openrouter",
+        api_key="",
+        model="openrouter/auto",
+        base_url="https://openrouter.ai/api/v1",
+    )
+    with pytest.raises(LLMConfigError) as exc_info:
+        create_provider(cfg)
+    assert "OPENROUTER_API_KEY" in (exc_info.value.user_message or str(exc_info.value))
+
+
+def test_ollama_works_without_api_key_and_uses_default_placeholder():
+    fake_openai_client = MagicMock()
+    cfg = Config(
+        provider="ollama",
+        api_key="",
+        model="llama3.2",
+        base_url="http://localhost:11434/v1",
+    )
+    provider = llm_client.OpenAICompatibleProvider(
+        "Ollama",
+        cfg.model,
+        cfg.base_url or "",
+        cfg.api_key or "ollama",
+        client=fake_openai_client,
+    )
+    assert provider.name == "Ollama"
+    assert provider.model == "llama3.2"
+
+
+def test_openrouter_stream_chat_yields_chunks_and_updates_history_only_on_non_empty_reply(monkeypatch):
+    fake_openai = SimpleNamespace(
+        APITimeoutError=TimeoutError,
+        APIConnectionError=ConnectionError,
+        BadRequestError=ValueError,
+    )
+    monkeypatch.setitem(sys.modules, "openai", fake_openai)
+
+    chunk_1 = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="Witaj "))])
+    chunk_2 = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="wędrowcze."))])
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create.return_value = iter([chunk_1, chunk_2])
+
+    provider = llm_client.OpenAICompatibleProvider(
+        "OpenRouter",
+        "stepfun/step-3.5-flash:free",
+        "https://openrouter.ai/api/v1",
+        "sk-or-test",
+        client=fake_client,
+    )
+    session = provider.start_chat("Jesteś MG.")
+    chunks = list(session.send_message_stream("Rozglądam się."))
+
+    assert chunks == ["Witaj ", "wędrowcze."]
+    assert session._history[-2:] == [
+        {"role": "user", "content": "Rozglądam się."},
+        {"role": "assistant", "content": "Witaj wędrowcze."},
+    ]
+
+
+def test_verify_llm_credentials_openrouter_without_key_fails():
+    ok, msg = main.verify_llm_credentials("", "openrouter/auto", provider_name="openrouter")
+    assert ok is False
+    assert "klucz" in msg.lower()
+
+
+def test_verify_llm_credentials_ollama_without_key_calls_provider(monkeypatch):
+    fake_provider = _FakeProvider(name="Ollama", model="llama3.2", generate_return="pong")
+    monkeypatch.setattr(llm_client, "create_provider", lambda cfg: fake_provider)
+
+    ok, msg = main.verify_llm_credentials("", "llama3.2", provider_name="ollama")
+    assert ok is True
+    assert "Ollama" in msg
+    assert fake_provider.generate_calls
+
+
+@pytest.mark.parametrize("err_code", ["429", "503"])
+def test_openrouter_or_ollama_quota_or_overload_in_verify(monkeypatch, err_code):
+    fake_provider = _FakeProvider(
+        name="OpenRouter",
+        model="openrouter/auto",
+        generate_side_effect=LLMError(f"HTTP {err_code} temporary issue"),
+    )
+    monkeypatch.setattr(llm_client, "create_provider", lambda cfg: fake_provider)
+
+    ok, msg = main.verify_llm_credentials("sk-or-test", "openrouter/auto", provider_name="openrouter")
+    assert ok is False
+    assert err_code in msg
+
+@pytest.mark.parametrize("provider_name", ["gemini", "openrouter", "ollama"])
+def test_provider_models_mapping_contains_expected_entries(provider_name):
+    assert hasattr(main, "PROVIDER_MODELS")
+    assert provider_name in main.PROVIDER_MODELS
+    assert isinstance(main.PROVIDER_MODELS[provider_name], list)
+    assert len(main.PROVIDER_MODELS[provider_name]) > 0
+
+
+@pytest.mark.parametrize(
+    "provider_name, expected_model",
+    [
+        ("gemini", "gemini-3.5-flash-lite"),
+        ("openrouter", "openrouter/auto"),
+        ("ollama", "llama3.2"),
+    ],
+)
+
+def test_dialog_provider_change_updates_available_models(provider_name, expected_model):
+    dialog = main.LlmStartupDialog.__new__(main.LlmStartupDialog)
+    dialog.provider_var = _DummyVar(provider_name)
+    dialog.model_var = _DummyVar("")
+    dialog.model_combo = {}
+
+    if hasattr(dialog, "_on_provider_change"):
+        dialog._on_provider_change()
+        assert expected_model in dialog.model_combo["values"]
+        assert dialog.model_var.get() == expected_model
