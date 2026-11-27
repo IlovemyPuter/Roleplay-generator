@@ -373,6 +373,7 @@ def create_provider(settings: Config | None = None) -> LLMProvider:
                 user_message="❌ Brak klucza OPENROUTER_API_KEY. Ustaw go w pliku .env lub w zmiennych środowiskowych.",
             )
         name, api_key = "OpenRouter", settings.api_key
+        base_url = settings.base_url or "https://openrouter.ai/api/v1"
         hint = "Sprawdź połączenie z internetem."
     else:  # ollama
         name, api_key = "Ollama", settings.api_key or "ollama"  # klucz jest ignorowany, ale SDK wymaga stringa
